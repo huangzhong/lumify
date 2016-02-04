@@ -2,6 +2,7 @@ package io.lumify.core.model.workQueue;
 
 import com.altamiracorp.bigtable.model.FlushFlag;
 import com.google.inject.Inject;
+import io.lumify.core.config.Configuration;
 import io.lumify.core.exception.LumifyException;
 import io.lumify.core.ingest.WorkerSpout;
 import io.lumify.core.model.notification.SystemNotification;
@@ -26,13 +27,19 @@ import static com.google.common.base.Preconditions.checkNotNull;
 
 public abstract class WorkQueueRepository {
     protected static final LumifyLogger LOGGER = LumifyLoggerFactory.getLogger(WorkQueueRepository.class);
-    public static final String GRAPH_PROPERTY_QUEUE_NAME = "graphProperty";
-    public static final String LONG_RUNNING_PROCESS_QUEUE_NAME = "longRunningProcess";
+    public static String GRAPH_PROPERTY_QUEUE_NAME = "graphProperty";
+    public static String LONG_RUNNING_PROCESS_QUEUE_NAME = "longRunningProcess";
     private final Graph graph;
 
     @Inject
-    protected WorkQueueRepository(Graph graph) {
+    protected WorkQueueRepository(Graph graph, Configuration configuration) {
         this.graph = graph;
+
+        String prefix = configuration.get(Configuration.QUEUE_PREFIX, null);
+        if (prefix != null) {
+            GRAPH_PROPERTY_QUEUE_NAME = prefix + "-" + GRAPH_PROPERTY_QUEUE_NAME;
+            LONG_RUNNING_PROCESS_QUEUE_NAME = prefix + "-" + LONG_RUNNING_PROCESS_QUEUE_NAME;
+        }
     }
 
     public void pushGraphPropertyQueue(final Element element, final Property property) {
@@ -93,9 +100,8 @@ public abstract class WorkQueueRepository {
         broadcastPropertyChange(element, propertyKey, propertyName, workspaceId);
     }
 
-    public void pushLongRunningProcessQueue(JSONObject queueItem, String userId) {
-        queueItem.put("enqueueTime", System.currentTimeMillis());
-        queueItem.put("userId", userId);
+    public void pushLongRunningProcessQueue(JSONObject queueItem) {
+        broadcastLongRunningProcessChange(queueItem);
         pushOnQueue(LONG_RUNNING_PROCESS_QUEUE_NAME, FlushFlag.DEFAULT, queueItem);
     }
 
@@ -140,6 +146,16 @@ public abstract class WorkQueueRepository {
         json.put("type", "edgeDeletion");
         json.put("data", dataJson);
         broadcastJson(json);
+    }
+
+    public void pushVertexDeletion(Vertex vertex) {
+        broadcastVertexDeletion(vertex);
+    }
+
+    protected void broadcastVertexDeletion(Vertex vertex) {
+        JSONArray vertexIds = new JSONArray();
+        vertexIds.put(vertex.getId());
+        broadcastVerticesDeletion(vertexIds);
     }
 
     public void pushVerticesDeletion(JSONArray verticesDeleted) {
@@ -398,6 +414,108 @@ public abstract class WorkQueueRepository {
 
     }
 
+    public void broadcastPublishVertexDelete(Vertex vertex) {
+        broadcastPublish(vertex, PublishType.DELETE);
+    }
+
+    public void broadcastPublishVertex(Vertex vertex) {
+        broadcastPublish(vertex, PublishType.TO_PUBLIC);
+    }
+
+    public void broadcastUndoVertexDelete(Vertex vertex) {
+        broadcastPublish(vertex, PublishType.UNDO_DELETE);
+    }
+
+    public void broadcastUndoVertex(Vertex vertex) {
+        broadcastPublish(vertex, PublishType.UNDO);
+    }
+
+    public void broadcastPublishPropertyDelete(Element element, String key, String name) {
+        broadcastPublish(element, key, name, PublishType.DELETE);
+    }
+
+    public void broadcastPublishProperty(Element element, String key, String name) {
+        broadcastPublish(element, key, name, PublishType.TO_PUBLIC);
+    }
+
+    public void broadcastUndoPropertyDelete(Element element, String key, String name) {
+        broadcastPublish(element, key, name, PublishType.UNDO_DELETE);
+    }
+
+    public void broadcastUndoProperty(Element element, String key, String name) {
+        broadcastPublish(element, key, name, PublishType.UNDO);
+    }
+
+    public void broadcastPublishEdgeDelete(Edge edge) {
+        broadcastPublish(edge, PublishType.DELETE);
+    }
+
+    public void broadcastPublishEdge(Edge edge) {
+        broadcastPublish(edge, PublishType.TO_PUBLIC);
+    }
+
+    public void broadcastUndoEdgeDelete(Edge edge) {
+        broadcastPublish(edge, PublishType.UNDO_DELETE);
+    }
+
+    public void broadcastUndoEdge(Edge edge) {
+        broadcastPublish(edge, PublishType.UNDO);
+    }
+
+    private void broadcastPublish(Element element, PublishType publishType) {
+        broadcastPublish(element, null, null, publishType);
+    }
+
+    private void broadcastPublish(Element element, String propertyKey, String propertyName, PublishType publishType) {
+        try {
+            JSONObject json;
+            if (element instanceof Vertex) {
+                json = getBroadcastPublishJson((Vertex) element, propertyKey, propertyName, publishType);
+            } else if (element instanceof Edge) {
+                json = getBroadcastPublishJson((Edge) element, propertyKey, propertyName, publishType);
+            } else {
+                throw new LumifyException("Unexpected element type: " + element.getClass().getName());
+            }
+            broadcastJson(json);
+        } catch (Exception ex) {
+            throw new LumifyException("Could not broadcast publish", ex);
+        }
+    }
+
+    protected JSONObject getBroadcastPublishJson(Vertex graphVertex, String propertyKey, String propertyName, PublishType publishType) {
+        JSONObject json = new JSONObject();
+        json.put("type", "publish");
+
+        JSONObject dataJson = new JSONObject();
+        dataJson.put("graphVertexId", graphVertex.getId());
+        dataJson.put("publishType", publishType.getJsonString());
+        if (propertyName == null) {
+            dataJson.put("objectType", "vertex");
+        } else {
+            dataJson.put("objectType", "property");
+        }
+        json.put("data", dataJson);
+
+        return json;
+    }
+
+    protected JSONObject getBroadcastPublishJson(Edge edge, String propertyKey, String propertyName, PublishType publishType) {
+        JSONObject json = new JSONObject();
+        json.put("type", "publish");
+
+        JSONObject dataJson = new JSONObject();
+        dataJson.put("graphEdgeId", edge.getId());
+        dataJson.put("publishType", publishType.getJsonString());
+        if (propertyName == null) {
+            dataJson.put("objectType", "edge");
+        } else {
+            dataJson.put("objectType", "property");
+        }
+        json.put("data", dataJson);
+
+        return json;
+    }
+
     public static abstract class BroadcastConsumer {
         public abstract void broadcastReceived(JSONObject json);
     }
@@ -417,6 +535,23 @@ public abstract class WorkQueueRepository {
 
         public void complete() {
             complete(null);
+        }
+    }
+
+    private enum PublishType {
+        TO_PUBLIC("toPublic"),
+        DELETE("delete"),
+        UNDO_DELETE("undoDelete"),
+        UNDO("undo");
+
+        private final String jsonString;
+
+        PublishType(String jsonString) {
+            this.jsonString = jsonString;
+        }
+
+        public String getJsonString() {
+            return jsonString;
         }
     }
 }

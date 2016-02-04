@@ -1,7 +1,9 @@
 package io.lumify.yarn;
 
+import com.beust.jcommander.DynamicParameter;
 import com.beust.jcommander.JCommander;
 import com.beust.jcommander.Parameter;
+import com.beust.jcommander.internal.Lists;
 import org.apache.commons.io.IOUtils;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
@@ -19,13 +21,13 @@ import org.apache.hadoop.yarn.util.Records;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.Collections;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 public abstract class ClientBase {
+    @SuppressWarnings("OctalInteger")
+    public static final short FILE_PERMISSIONS = (short) 0710;
+
     @Parameter(names = {"-memory", "-mem"}, description = "Memory for each process in MB.")
     private int memory = 512;
 
@@ -37,6 +39,10 @@ public abstract class ClientBase {
 
     @Parameter(names = {"-jar"}, description = "Path to jar.", required = true)
     private String jar = null;
+
+    @SuppressWarnings("MismatchedQueryAndUpdateOfCollection")
+    @DynamicParameter(names = {"-env"}, description = "Environment variable override. (e.g.: -envPATH=/foo:/bar -envLD_LIBRARY_PATH=/baz)")
+    private Map<String, String> environmentVariableOverrides = new HashMap<>();
 
     protected int run(String[] args) throws Exception {
         new JCommander(this, args);
@@ -99,14 +105,15 @@ public abstract class ClientBase {
     }
 
     private Map<String, String> createEnvironment(String classPathEnv) {
-        Map<String, String> appMasterEnv = new HashMap<String, String>();
+        Map<String, String> appMasterEnv = new HashMap<>();
         appMasterEnv.putAll(System.getenv());
         appMasterEnv.put(ApplicationConstants.Environment.CLASSPATH.name(), classPathEnv);
+        appMasterEnv.putAll(environmentVariableOverrides);
         return appMasterEnv;
     }
 
     private Map<String, LocalResource> createLocalResources(FileSystem fs, Path remotePath, String localResourceJarFileName, File jarPath) throws IOException {
-        Map<String, LocalResource> localResources = new HashMap<String, LocalResource>();
+        Map<String, LocalResource> localResources = new HashMap<>();
         addToLocalResources(fs, remotePath, jarPath.getPath(), localResourceJarFileName, localResources, null);
         return localResources;
     }
@@ -158,24 +165,31 @@ public abstract class ClientBase {
     private void addToLocalResources(FileSystem fs, Path remotePath, String fileSrcPath, String fileDstPath, Map<String, LocalResource> localResources, String resources) throws IOException {
         Path dst = new Path(remotePath, fileDstPath);
         if (fileSrcPath == null) {
-            FSDataOutputStream ostream = null;
+            FSDataOutputStream out = null;
             try {
-                ostream = FileSystem.create(fs, dst, new FsPermission((short) 0710));
-                ostream.writeUTF(resources);
+                out = FileSystem.create(fs, dst, new FsPermission(FILE_PERMISSIONS));
+                out.writeUTF(resources);
             } finally {
-                IOUtils.closeQuietly(ostream);
+                IOUtils.closeQuietly(out);
             }
         } else {
             fs.copyFromLocalFile(new Path(fileSrcPath), dst);
         }
         FileStatus scFileStatus = fs.getFileStatus(dst);
-        LocalResource scRsrc = LocalResource.newInstance(ConverterUtils.getYarnUrlFromURI(dst.toUri()), LocalResourceType.FILE, LocalResourceVisibility.APPLICATION, scFileStatus.getLen(), scFileStatus.getModificationTime());
-        localResources.put(fileDstPath, scRsrc);
+        LocalResource localResource = LocalResource.newInstance(ConverterUtils.getYarnUrlFromURI(dst.toUri()), LocalResourceType.FILE, LocalResourceVisibility.APPLICATION, scFileStatus.getLen(), scFileStatus.getModificationTime());
+        localResources.put(fileDstPath, localResource);
     }
 
     public static void printEnv() {
         System.out.println("Environment:");
-        for (Map.Entry<String, String> e : System.getenv().entrySet()) {
+        LinkedList<Map.Entry<String, String>> environmentVariables = Lists.newLinkedList(System.getenv().entrySet());
+        Collections.sort(environmentVariables, new Comparator<Map.Entry<String, String>>() {
+            @Override
+            public int compare(Map.Entry<String, String> o1, Map.Entry<String, String> o2) {
+                return o1.getKey().compareTo(o2.getKey());
+            }
+        });
+        for (Map.Entry<String, String> e : environmentVariables) {
             System.out.println("  " + e.getKey() + "=" + e.getValue());
         }
     }

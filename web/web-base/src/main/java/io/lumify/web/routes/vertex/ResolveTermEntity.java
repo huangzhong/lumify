@@ -2,7 +2,8 @@ package io.lumify.web.routes.vertex;
 
 import com.google.inject.Inject;
 import io.lumify.core.config.Configuration;
-import io.lumify.core.exception.LumifyException;
+import io.lumify.core.model.PropertyJustificationMetadata;
+import io.lumify.core.model.SourceInfo;
 import io.lumify.core.model.audit.AuditAction;
 import io.lumify.core.model.audit.AuditRepository;
 import io.lumify.core.model.ontology.Concept;
@@ -38,7 +39,7 @@ public class ResolveTermEntity extends BaseRequestHandler {
     private final VisibilityTranslator visibilityTranslator;
     private final WorkspaceRepository workspaceRepository;
     private final WorkQueueRepository workQueueRepository;
-    private final String artifactHasEntityIri;
+    private String artifactHasEntityIri;
 
     @Inject
     public ResolveTermEntity(
@@ -58,15 +59,18 @@ public class ResolveTermEntity extends BaseRequestHandler {
         this.visibilityTranslator = visibilityTranslator;
         this.workspaceRepository = workspaceRepository;
         this.workQueueRepository = workQueueRepository;
-
-        this.artifactHasEntityIri = this.getConfiguration().get(Configuration.ONTOLOGY_IRI_ARTIFACT_HAS_ENTITY, null);
+        this.artifactHasEntityIri = ontologyRepository.getRelationshipIRIByIntent("artifactHasEntity");
         if (this.artifactHasEntityIri == null) {
-            throw new LumifyException("Could not find configuration for " + Configuration.ONTOLOGY_IRI_ARTIFACT_HAS_ENTITY);
+            LOGGER.warn("'artifactHasEntity' intent has not been defined. Please update your ontology.");
         }
     }
 
     @Override
     public void handle(HttpServletRequest request, HttpServletResponse response, HandlerChain chain) throws Exception {
+        if (this.artifactHasEntityIri == null) {
+            this.artifactHasEntityIri = ontologyRepository.getRequiredRelationshipIRIByIntent("artifactHasEntity");
+        }
+
         final String artifactId = getRequiredParameter(request, "artifactId");
         final String propertyKey = getRequiredParameter(request, "propertyKey");
         final long mentionStart = getRequiredParameterAsLong(request, "mentionStart");
@@ -76,7 +80,7 @@ public class ResolveTermEntity extends BaseRequestHandler {
         final String visibilitySource = getRequiredParameter(request, "visibilitySource");
         final String resolvedVertexId = getOptionalParameter(request, "resolvedVertexId");
         final String justificationText = getOptionalParameter(request, "justificationText");
-        final String sourceInfo = getOptionalParameter(request, "sourceInfo");
+        final String sourceInfoString = getOptionalParameter(request, "sourceInfo");
 
         User user = getUser(request);
         String workspaceId = getActiveWorkspaceId(request);
@@ -108,12 +112,14 @@ public class ResolveTermEntity extends BaseRequestHandler {
             vertexMutation = vertex.prepareMutation();
         } else {
             vertexMutation = graph.prepareVertex(id, lumifyVisibility.getVisibility());
-            GraphUtil.addJustificationToMutation(vertexMutation, justificationText, sourceInfo, lumifyVisibility);
-
             LumifyProperties.CONCEPT_TYPE.setProperty(vertexMutation, conceptId, metadata, lumifyVisibility.getVisibility());
             LumifyProperties.TITLE.addPropertyValue(vertexMutation, MULTI_VALUE_KEY, title, metadata, lumifyVisibility.getVisibility());
-
             vertex = vertexMutation.save(authorizations);
+
+            if (justificationText != null) {
+                PropertyJustificationMetadata propertyJustificationMetadata = new PropertyJustificationMetadata(justificationText);
+                LumifyProperties.JUSTIFICATION.setProperty(vertex, propertyJustificationMetadata, lumifyVisibility.getVisibility(), authorizations);
+            }
 
             auditRepository.auditVertexElementMutation(AuditAction.UPDATE, vertexMutation, vertex, "", user, lumifyVisibility.getVisibility());
 
@@ -130,12 +136,16 @@ public class ResolveTermEntity extends BaseRequestHandler {
 
         auditRepository.auditRelationship(AuditAction.CREATE, artifactVertex, vertex, edge, "", "", user, lumifyVisibility.getVisibility());
 
+        SourceInfo sourceInfo = SourceInfo.fromString(sourceInfoString);
+        String snippet = (sourceInfo == null) ? null : sourceInfo.getSnippet();
+
         new TermMentionBuilder()
                 .sourceVertex(artifactVertex)
                 .propertyKey(propertyKey)
                 .start(mentionStart)
                 .end(mentionEnd)
                 .title(title)
+                .snippet(snippet)
                 .conceptIri(concept.getIRI())
                 .visibilityJson(visibilityJson)
                 .resolvedTo(vertex, edge)

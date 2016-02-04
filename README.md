@@ -13,57 +13,84 @@ To get started quickly, you can try out a hosted installation of Lumify, or down
 
 ## Quick Start
 
-1. Install Docker per their instructions: [https://docs.docker.com/installation](https://docs.docker.com/installation/#installation)
+1. Install and start Docker per their instructions: [https://docs.docker.com/installation](https://docs.docker.com/installation/#installation).  Only follow the instructions to install & start docker skipping any exercises or other steps beyond installation & starting Docker.
+	- Docker will not run natively on OSX or Windows, however, you can use Boot2Docker, a lightweight Linux Virtual Machine, to
+	  host Docker on these platforms.  After installing Boot2Docker you'll need to initialize and start Boot2Docker with
+	  sufficient memory to run the system.
+	  
+	- Initialize and start boot2docker on OSX/Windows with sufficient memory.  The instructions below illustrate initializing
+	  boot2docker with 4GB of memory, however, this can be increased if more memory is needed.
+
+		```sh
+		boot2docker init -m 4096
+		boot2docker start
+		```
+	- Set the Docker environment variables that are returned from the following Boot2Docker command.  To avoid setting environment variables each time Docker is started, configure these environment variables perminantly for your OS/shell.
+
+		```sh
+		boot2docker shellinit
+		
+		Writing <user home dir>/.boot2docker/certs/boot2docker-vm/ca.pem
+		Writing <user home dir>/.boot2docker/certs/boot2docker-vm/cert.pem
+		Writing <user home dir>/.boot2docker/certs/boot2docker-vm/key.pem
+		export DOCKER_HOST=tcp://192.168.59.103:2376
+		export DOCKER_CERT_PATH=<user home dir>/.boot2docker/certs/boot2docker-vm
+		export DOCKER_CERT_PATH=<user home dir>/.boot2docker/certs/boot2docker-vm
+		```
 
 1. Install node and npm per their instructions: [http://nodejs.org/](http://nodejs.org/)
 
-1. Install the Lumify npm dependencies (from the web/war/src/main/webapp directory):
+1. Clone the Lumify repo:
 
-        npm install -g inherits bower grunt
-        npm install grunt-cli
+    ```sh
+    git clone https://github.com/lumifyio/lumify.git
+    ```
+    
+    **_This will clone the repo to a `lumify` directory in your current working directory.  This absolute path will be referred to as `<cloned_repo_dir>` for the remainder of these steps._**
+
+1. Install the Lumify npm dependencies:
+    
+    ```sh
+    cd <cloned_repo_dir>/web/war/src/main/webapp
+    npm install -g inherits bower grunt
+    npm install -g grunt-cli
+    ```
 
 1. Update your hosts file:
     - Linux
 
-            echo '127.0.0.1 lumify-dev' >> /etc/hosts
-
+        ```sh
+        echo '127.0.0.1 lumify-dev' >> /etc/hosts
+        ```
+        
     - OS X
 
-            echo "$(boot2docker ip 2>/dev/null) lumify-dev" >> /etc/hosts
+        ```sh
+        echo "$(boot2docker ip 2>/dev/null) lumify-dev" >> /etc/hosts
+        ```
 
 1. Create the docker image:
-
-        docker/build-dev.sh
+    
+    ```sh
+    cd <cloned_repo_dir>
+    docker/build-dev.sh
+    ```
 
 1. Run the docker image: (This will start ZooKeeper, HDFS, YARN, ElasticSearch, and RabbitMQ)
+   
+    ```sh
+    docker/run-dev.sh
+    ```
 
-        docker/run-dev.sh
-
-1. Create a war file:
-
-        mvn package -P web-war -pl web/war -am -DskipTests -Dsource.skip=true
-
-1. Copy the war file:
-
-        cp web/war/target/lumify-web-war*.war \
-           docker/lumify-dev-persistent/opt/jetty/webapps/root.war
-
-1. Package an auth plugin:
-
-        mvn package -pl ./web/plugins/auth-username-only -am -DskipTests
-
-1. Copy the auth plugin for use in the docker image:
-
-        cp web/plugins/auth-username-only/target/lumify-web-auth-username-only-*[0-9T].jar \
-           docker/lumify-dev-persistent/opt/lumify/lib
- 
-1. Inside the docker image run Jetty:
-
-        /opt/jetty/bin/jetty.sh start
-
-1. Open a browser and go to: `http://lumify-dev:8080/`
+1. Run the web server. Choose one of the following:
+   * [Run in the docker image](docker/README.md#docker-web-server)
+   * [Run locally in an IDE](docs/ide.md#development-jetty-web-server)
 
 See [docker/README.md](docker/) for more information on the docker dev image.
+
+See [docs/developer.md](docs/developer.md) for more information on developing for Lumify.
+
+See [datasets](datasets) for sample datasets to get started.
 
 ## Developing / Contributing
 

@@ -11,11 +11,11 @@ less likely to get out of sync than this document.
 
 | Dependency                                                                                 | Version          |
 | ------------------------------------------------------------------------------------------ | ---------------- |
-| [Cloudera CDH](http://www.cloudera.com/content/cloudera/en/products-and-services/cdh.html) | 5.2.1            |
+| [Cloudera CDH](http://www.cloudera.com/content/cloudera/en/products-and-services/cdh.html) | 5.3.1            |
 | [Apache Accumulo](http://accumulo.apache.org)                                              | 1.6.1            |
-| [Elasticsearch](http://www.elasticsearch.org/)                                             | 1.4.1            |
+| [Elasticsearch](http://www.elasticsearch.org/)                                             | 1.4.4            |
 | [RabbitMQ](http://www.rabbitmq.com/)                                                       | 3.4.2            |
-| [Jetty](http://www.eclipse.org/jetty/)                                                     | 9.2.5.v20141112  |
+| [Jetty](http://www.eclipse.org/jetty/)                                                     | 9.2.7.v20150116  |
 
 ## Lumify Dependencies by Feature
 
@@ -23,7 +23,7 @@ Some optional Lumify features require the installation of additional dependencie
 
 | Category | Feature                                               | Lumify YARN Plugins              | Dependencies |
 | -------- | ----------------------------------------------------- | -------------------------------- | ------------ |
-| text     | resolution of location terms to geolocations          | clavin                           | [CLAVIN](http://clavin.bericotechnologies.com/) |
+| text     | resolution of location terms to geolocations          | clavin                           | [CLAVIN](CLAVIN.md) |
 | text     | translation of foreign language text to English       | translate <br /> translator-bing | Bing Translate API Key <br /> see [../graph-property-worker/plugins/translator-bing/README.md](../graph-property-worker/plugins/translator-bing/README.md) |
 | media    | conversion of video files to web compatible formats   | _n/a - base topology feature_    | [FFmpeg](https://www.ffmpeg.org/) <br /> see [setup-ffmpeg.md](setup-ffmpeg.md) |
 | media    | closed caption transcription of video files           | ccextractor                      | [CCExtractor](http://ccextractor.sourceforge.net/) |

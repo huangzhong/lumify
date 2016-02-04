@@ -42,7 +42,19 @@ define([
                         return {
                             list: _.sortBy(ontology.properties, 'displayName'),
                             byTitle: _.indexBy(ontology.properties, 'title'),
-                            byDataType: _.groupBy(ontology.properties, 'dataType')
+                            byDataType: _.groupBy(ontology.properties, 'dataType'),
+                            byDependentToCompound: _.chain(ontology.properties)
+                                .filter(function(p) {
+                                    return 'dependentPropertyIris' in p;
+                                })
+                                .map(function(p) {
+                                    return p.dependentPropertyIris.map(function(iri) {
+                                        return [iri, p.title];
+                                    })
+                                })
+                                .flatten(true)
+                                .object()
+                                .value()
                         };
                     });
             }),
@@ -123,7 +135,9 @@ define([
                                     } else if (
                                         [
                                             'http://lumify.io/user#user',
-                                            'http://lumify.io/workspace#workspace'
+                                            'http://lumify.io/workspace#workspace',
+                                            'http://lumify.io/longRunningProcess#longRunningProcess',
+                                            'http://lumify.io/termMention#termMention'
                                         ].indexOf(child.id) === -1
                                     ) {
                                         console.warn(

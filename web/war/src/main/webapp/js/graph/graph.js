@@ -253,7 +253,6 @@ define([
                     self.trigger('updateWorkspace', {
                         entityUpdates: entityUpdates
                     });
-                    cy.container().focus();
                 }
             });
         };
@@ -312,6 +311,10 @@ define([
                     });
                 } else customLayout.resolve({});
 
+                if (vertices.length && self.vertexIdsToSelect && self.vertexIdsToSelect.length) {
+                    cy.$(':selected').unselect();
+                }
+
                 customLayout.done(function(layoutPositions) {
 
                     var cyNodes = [];
@@ -324,7 +327,7 @@ define([
                                     id: toCyId(vertex)
                                 },
                                 grabbable: self.isWorkspaceEditable,
-                                selected: false // TODO: check selected?
+                                selected: self.vertexIdsToSelect && ~self.vertexIdsToSelect.indexOf(vertex.id)
                             },
                             workspaceVertex = self.workspaceVertices[vertex.id];
 
@@ -405,6 +408,8 @@ define([
                         cyNodes.push(cyNodeData);
                     });
 
+                    self.vertexIdsToSelect = null;
+
                     var addedCyNodes = cy.add(cyNodes);
                     addedVertices.concat(updatedVertices).forEach(function(v) {
                         v.graphPosition = retina.pixelsToPoints(cy.getElementById(toCyId(v.vertexId)).position());
@@ -474,6 +479,7 @@ define([
             var truncatedTitle = F.string.truncate(F.vertex.title(vertex), 3),
                 merged = data;
 
+            merged.previousTruncated = truncatedTitle;
             merged.truncatedTitle = truncatedTitle;
             merged.conceptType = F.vertex.prop(vertex, 'conceptType');
             merged.imageSrc = F.vertex.image(vertex);
@@ -484,11 +490,12 @@ define([
         this.onVerticesDeleted = function(event, data) {
             this.cytoscapeReady(function(cy) {
 
-                if (data.vertices.length) {
+                if (data.vertexIds.length) {
                     cy.$(
-                        data.vertices.map(function(v) {
-                        return '#' + toCyId(v);
-                    }).join(',')).remove();
+                        data.vertexIds.map(function(v) {
+                            return '#' + toCyId(v);
+                        }).join(',')
+                    ).remove();
 
                     this.setWorkspaceDirty();
                     this.updateVertexSelections(cy);
@@ -712,15 +719,12 @@ define([
             this.cytoscapeReady(function(cy) {
                 var self = this;
                 _.each(cy.edges(), function(cyEdge) {
-                    var edges = cyEdge.data('edges');
+                    var edges = _.reject(cyEdge.data('edges'), function(e) {
+                            return e.id === data.edgeId
+                        }),
                         ontology = self.ontologyRelationships.byTitle[cyEdge.data('type')];
 
-                    if (edges.length < 2) {
-                        cyEdge.remove();
-                    } else {
-                        edges = _.reject(edges, function(e) {
-                            return e.id === data.edgeId
-                        });
+                    if (edges.length) {
                         cyEdge.data('edges', edges);
                         cyEdge.data('label',
                             (ontology && ontology.displayName || '') + (
@@ -729,6 +733,8 @@ define([
                                     ''
                             )
                         );
+                    } else {
+                        cyEdge.remove();
                     }
                 });
             });
@@ -1052,7 +1058,6 @@ define([
 
             if (event.cyTarget === event.cy) {
                 this.trigger('selectObjects');
-                event.cy.container().focus();
             }
         });
 
@@ -1184,7 +1189,7 @@ define([
 
         this.graphSelect = throttle('selection', SELECTION_THROTTLE, function(event) {
             if (this.ignoreCySelectionEvents) return;
-            this.updateVertexSelections(event.cy);
+            this.updateVertexSelections(event.cy, event.cyTarget);
         });
 
         this.graphUnselect = throttle('selection', SELECTION_THROTTLE, function(event) {
@@ -1198,12 +1203,24 @@ define([
             }
         });
 
-        this.updateVertexSelections = function(cy) {
+        this.updateVertexSelections = function(cy, cyTarget) {
             var self = this,
                 nodes = cy.nodes().filter(':selected').not('.temp'),
                 edges = cy.edges().filter(':selected').not('.temp'),
                 edgeIds = [],
                 vertexIds = [];
+
+            if (lumifyKeyboard.shiftKey) {
+                nodes = nodes.add(self.previousSelectionNodes)
+                if (cyTarget !== cy && cyTarget.length && self.previousSelectionNodes &&
+                   self.previousSelectionNodes.anySame(cyTarget)) {
+
+                    nodes = nodes.not(cyTarget)
+                }
+            }
+
+            self.previousSelectionNodes = nodes;
+            self.previousSelectionEdges = edges;
 
             nodes.each(function(index, cyNode) {
                 if (!cyNode.hasClass('temp') && !cyNode.hasClass('path-edge')) {
@@ -1389,6 +1406,9 @@ define([
 
         // Delete entities before saving (faster feeling interface)
         this.onUpdateWorkspace = function(cy, event, data) {
+            if (data.options && data.options.selectAll && data.entityUpdates) {
+                this.vertexIdsToSelect = _.pluck(data.entityUpdates, 'vertexId');
+            }
             if (data && data.entityDeletes && data.entityDeletes.length) {
                 cy.$(
                     data.entityDeletes.map(function(vertexId) {

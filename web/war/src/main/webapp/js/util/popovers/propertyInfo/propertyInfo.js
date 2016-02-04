@@ -27,6 +27,17 @@ define([
 
         this.before('initialize', function(node, config) {
             config.template = 'propertyInfo/template';
+            if (config.property) {
+                config.isComment = config.property.name === 'http://lumify.io/comment#entry';
+                config.isCommentCreator = config.isComment &&
+                    config.property.metadata &&
+                    config.property.metadata['http://lumify.io#modifiedBy'] === lumifyData.currentUser.id;
+                config.canEdit = config.isComment ?
+                    config.isCommentCreator :
+                    true;
+                config.canDelete = config.canEdit && config.property.name !== 'http://lumify.io#visibilityJson';
+            }
+            config.hideDialog = true;
         });
 
         this.after('initialize', function() {
@@ -61,28 +72,29 @@ define([
 
                         self.contentRoot = d3.select(self.popover.get(0))
                             .select('.popover-content');
-                        self.update(self.attr.property);
+                        self.update();
 
                         self.on(document, 'verticesUpdated', self.onVerticesUpdated);
+                        self.on(document, 'escape', self.onEscapeKey);
                     });
             });
         });
 
-        this.update = function(property) {
-            var vertexId = this.attr.vertexId,
+        this.onEscapeKey = function() {
+            this.teardown();
+        };
+
+        this.update = function() {
+            var self = this,
+                vertexId = this.attr.data.id,
+                isVisibility = this.attr.property.name === 'http://lumify.io#visibilityJson',
+                property = isVisibility ?
+                    _.first(F.vertex.props(this.attr.data, this.attr.property.name)) :
+                    _.first(F.vertex.props(this.attr.data, this.attr.property.name, this.attr.property.key)),
                 positionDialog = this.positionDialog.bind(this),
                 displayNames = this.metadataPropertiesDisplayMap,
                 displayTypes = this.metadataPropertiesTypeMap,
                 isComment = property.name === 'http://lumify.io/comment#entry',
-                isCommentCreator = isComment &&
-                    property.metadata['http://lumify.io#modifiedBy'] === lumifyData.currentUser.id,
-                canEdit = isComment ?
-                    isCommentCreator :
-                    (
-                        F.vertex.sandboxStatus(property) ||
-                        property.name === 'http://lumify.io#visibilityJson'
-                    ),
-                canDelete = canEdit && property.name !== 'http://lumify.io#visibilityJson',
                 metadata = _.chain(this.metadataProperties || [])
                     .map(function(name) {
                         if ('metadata' in property) {
@@ -96,6 +108,10 @@ define([
                     })
                     .compact()
                     .filter(function(m) {
+                        if (property.name === 'http://lumify.io#visibilityJson' &&
+                            m[0] === 'sandboxStatus') {
+                            return false;
+                        }
                         if (m[0] === 'http://lumify.io#confidence' && isComment) {
                             return false;
                         }
@@ -114,29 +130,6 @@ define([
                             });
                     });
 
-            this.contentRoot.select('.btn-danger')
-                .style('display', canDelete ? 'inline' : 'none')
-                .classed('requires-EDIT', !isComment)
-                .classed('requires-COMMENT', isComment)
-            this.contentRoot.select('.editadd')
-                .style('display', isComment && !isCommentCreator ? 'none' : 'inline')
-                .classed('btn-edit', canEdit)
-                .classed('btn-add', !canEdit)
-                .classed('requires-EDIT', !isComment)
-                .classed('requires-COMMENT', isComment)
-                .classed('nodelete', !canDelete)
-                .text(canEdit ?
-                  i18n('popovers.property_info.button.edit') :
-                  i18n('popovers.property_info.button.add')
-                );
-            this.contentRoot.select('.reply').each(function() {
-                var $this = $(this);
-                if (isComment) {
-                    $this.show();
-                } else {
-                    $this.hide();
-                }
-            })
             this.contentRoot.selectAll('tr')
                 .call(function() {
                     var self = this;
@@ -176,16 +169,48 @@ define([
                 });
 
             // Justification
-            var justification = [];
-            if (property.metadata &&
-                (property.metadata._justificationMetadata || property.metadata._sourceMetadata)) {
-                justification.push(true);
+            var justification = [{}];
+            if (property.metadata && property.metadata['http://lumify.io#justification']) {
+                justification[0].justificationText = property.metadata['http://lumify.io#justification']
             }
 
-            var table = this.contentRoot.select('table'),
-                justificationRow = this.contentRoot.selectAll('.justification')
+            if (isVisibility) {
+                this.renderJustification([])
+            } else {
+                this.renderJustification(justification);
+                if (!justification[0].justificationText) {
+                    this.dataRequest(
+                        'vertex',
+                        'propertySourceInfo',
+                        this.attr.data.id,
+                        property.name,
+                        property.key,
+                        property.metadata &&
+                        property.metadata['http://lumify.io#visibilityJson'] &&
+                        property.metadata['http://lumify.io#visibilityJson'].source
+                    )
+                        .then(function(sourceInfo) {
+                            self.renderJustification([{
+                                sourceInfo: sourceInfo
+                            }]);
+                        })
+                        .catch(function() {
+                            self.renderJustification([{ sourceInfo: null }]);
+                        })
+                        .finally(positionDialog)
+                }
+            }
 
-            justificationRow
+            row.exit().remove();
+
+            this.dialog.show();
+            positionDialog();
+        };
+
+        this.renderJustification = function(justification) {
+            var self = this;
+
+            this.contentRoot.selectAll('.justification')
                 .data(justification)
                 .call(function() {
                     this.enter()
@@ -194,34 +219,39 @@ define([
                                 .call(function() {
                                     this.append('div')
                                         .attr('class', 'property-name property-justification')
-                                        .text(i18n('popovers.property_info.justification'));
+                                        .text(i18n('popovers.property_info.justification'))
+                                        .append('span').attr('class', 'badge')
                                     this.append('div')
                                         .attr('class', 'justificationValue');
                                 });
                         });
                     this.exit().remove();
 
-                    var node = this.select('.justificationValue').node();
-                    if (node) {
-                        require(['util/vertex/justification/viewer'], function(JustificationViewer) {
-                            $(node).teardownAllComponents();
-                            JustificationViewer.attachTo(node, {
-                                justificationMetadata: property.metadata._justificationMetadata,
-                                sourceMetadata: property.metadata._sourceMetadata
-                            });
-                            positionDialog();
-                        });
-                    }
-                })
-
-            row.exit().remove();
-
-            positionDialog();
-        };
+                    this.select('.property-justification .badge').classed('loading', function(j) {
+                        return _.isEmpty(j);
+                    })
+                    this.select('.justificationValue').each(function(j) {
+                        if (j.justificationText || j.sourceInfo) {
+                            require(['util/vertex/justification/viewer'], function(JustificationViewer) {
+                                $(this).teardownAllComponents();
+                                JustificationViewer.attachTo(this, {
+                                    justificationMetadata: j.justificationText,
+                                    sourceMetadata: j.sourceInfo
+                                });
+                                self.positionDialog();
+                            }.bind(this));
+                        } else {
+                            this.textContent = _.isEmpty(j) ?
+                                '' :
+                                i18n('popovers.property_info.justification.none');
+                        }
+                    })
+                });
+        }
 
         this.onVerticesUpdated = function(event, data) {
             var vertex = _.findWhere(data.vertices, {
-                    id: this.attr.vertexId
+                    id: this.attr.data.id
                 }),
                 property = vertex && _.findWhere(vertex.properties, {
                     name: this.attr.property.name,
@@ -230,8 +260,8 @@ define([
             if (vertex && !property) {
                 this.teardown();
             } else if (property) {
-                this.attr.property = property;
-                this.update(property);
+                this.attr.data = vertex;
+                this.update();
             }
         };
 

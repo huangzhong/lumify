@@ -22,6 +22,8 @@ define([
     var component = defineComponent(Properties, withDataRequest, withPropertyInfo),
         HIDE_PROPERTIES = ['http://lumify.io/comment#entry'],
         VISIBILITY_NAME = 'http://lumify.io#visibilityJson',
+        SANDBOX_STATUS_NAME = 'http://lumify.io#sandboxStatus',
+        RELATIONSHIP_LABEL = 'http://lumify.io#relationshipLabel',
         AUDIT_DATE_DISPLAY = ['date-relative', 'date'],
         AUDIT_DATE_DISPLAY_RELATIVE = 0,
         AUDIT_DATE_DISPLAY_REAL = 1,
@@ -40,9 +42,17 @@ define([
         return property.name === VISIBILITY_NAME;
     }
 
+    function isSandboxStatus(property) {
+        return property.name === SANDBOX_STATUS_NAME;
+    }
+
+    function isRelationshipLabel(property) {
+        return property.name === RELATIONSHIP_LABEL;
+    }
+
     function isJustification(property) {
         return (
-            property.name === '_justificationMetadata' ||
+            property.name === 'http://lumify.io#justification' ||
             property.name === '_sourceMetadata'
         );
     }
@@ -69,7 +79,7 @@ define([
                 .call(
                     _.partial(
                         createPropertyGroups,
-                        self.attr.data.id,
+                        self.attr.data,
                         self.ontologyProperties,
                         self.showMoreExpanded,
                         parseInt(self.config['properties.multivalue.defaultVisibleCount'], 10)
@@ -81,6 +91,7 @@ define([
             var self = this,
                 model = self.attr.data,
                 isEdge = F.vertex.isEdge(model),
+                compoundPropertiesByNameToKeys = {},
                 displayProperties = _.chain(properties)
                     .filter(function(property) {
                         if (isEdge && isJustification(property)) {
@@ -89,7 +100,7 @@ define([
                                 hideVisibility: true,
                                 displayName: i18n('justification.field.label'),
                                 justificationData: {
-                                    justificationMetadata: property.name === '_justificationMetadata' ?
+                                    justificationMetadata: property.name === 'http://lumify.io#justification' ?
                                         property.value : null,
                                     sourceMetadata: property.name === '_sourceMetadata' ?
                                         property.value : null
@@ -106,6 +117,22 @@ define([
                             return false;
                         }
 
+                        // Remove dependent properties from list since they
+                        // rollup into compound properties
+                        if (~self.dependentPropertyIris.indexOf(property.name)) {
+                            var compoundProperty = self.propertyIriToCompoundProperty[property.name],
+                                compoundKey = compoundProperty.title;
+
+                            if (!compoundPropertiesByNameToKeys[compoundKey]) {
+                                compoundPropertiesByNameToKeys[compoundKey] = {
+                                    property: compoundProperty,
+                                    keys: {}
+                                };
+                            }
+                            compoundPropertiesByNameToKeys[compoundKey].keys[property.key] = true;
+                            return false;
+                        }
+
                         var ontologyProperty = self.ontologyProperties.byTitle[property.name];
                         return ontologyProperty && ontologyProperty.userVisible;
                     })
@@ -118,11 +145,43 @@ define([
                             });
                         }
 
+                        var sandboxStatus = F.vertex.sandboxStatus(self.attr.data);
+                        if (sandboxStatus) {
+                            properties.push({
+                                name: SANDBOX_STATUS_NAME,
+                                displayName: i18n('detail.entity.sandboxStatus'),
+                                value: sandboxStatus,
+                                hideInfo: true,
+                                hideVisibility: true,
+                            });
+                        }
+
+                        // Add compound properties (multi-value if there
+                        // dependent properties have multiple keys
+                        _.each(compoundPropertiesByNameToKeys, function(compoundInfo, compoundKey) {
+                            _.each(compoundInfo.keys, function(value, key) {
+                                var matching = F.vertex.props(self.attr.data, compoundInfo.property.title, key),
+                                    first = matching && _.first(matching),
+                                    property = {
+                                        compoundProperty: true,
+                                        name: compoundInfo.property.title,
+                                        key: key,
+                                        value: key
+                                    };
+
+                                if (first) {
+                                    property.metadata = first.metadata;
+                                }
+
+                                properties.push(property);
+                            });
+                        });
+
                         if (isEdge && model.label) {
                             var ontologyRelationship = self.ontologyRelationships.byTitle[model.label];
                             properties.push({
-                                name: 'relationshipLabel',
-                                displayName: 'Type',
+                                name: RELATIONSHIP_LABEL,
+                                displayName: i18n('detail.edge.type'),
                                 hideInfo: true,
                                 hideVisibility: true,
                                 value: ontologyRelationship ?
@@ -132,25 +191,41 @@ define([
                         }
                     })
                     .sortBy(function(property) {
+                        if (property.metadata && ('http://lumify.io#createDate' in property.metadata)) {
+                            return property.metadata['http://lumify.io#createDate'] * -1;
+                        }
+                        return 0;
+                    })
+                    .sortBy(function(property) {
+                        if (property.metadata && ('http://lumify.io#confidence' in property.metadata)) {
+                            return property.metadata['http://lumify.io#confidence'] * -1;
+                        }
+                        return 0;
+                    })
+                    .sortBy(function(property) {
                         if (isVisibility(property)) {
                             return '0';
                         }
 
+                        if (isSandboxStatus(property)) {
+                            return '1';
+                        }
+
                         if (isEdge) {
-                            return property.name === 'relationshipLabel' ?
-                                '1' :
+                            return property.name === RELATIONSHIP_LABEL ?
+                                '2' :
                                 isJustification(property) ?
-                                '2' : '3';
+                                '3' : '4';
                         }
 
                         var ontologyProperty = self.ontologyProperties.byTitle[property.name];
                         if (ontologyProperty && ontologyProperty.propertyGroup) {
-                            return '3' + ontologyProperty.propertyGroup.toLowerCase() + ontologyProperty.displayName;
+                            return '4' + ontologyProperty.propertyGroup.toLowerCase() + ontologyProperty.displayName;
                         }
                         if (ontologyProperty && ontologyProperty.displayName) {
-                            return '1' + ontologyProperty.displayName.toLowerCase();
+                            return '2' + ontologyProperty.displayName.toLowerCase();
                         }
-                        return '2' + property.name.toLowerCase();
+                        return '3' + property.name.toLowerCase();
                     })
                     .groupBy('name')
                     .pairs()
@@ -193,6 +268,20 @@ define([
 
                 self.config = config;
                 self.ontologyProperties = ontologyProperties;
+
+                self.dependentPropertyIris = [];
+                self.propertyIriToCompoundProperty = {};
+
+                self.ontologyProperties.list.forEach(function(p) {
+                    if (p.dependentPropertyIris && p.dependentPropertyIris.length) {
+                        p.dependentPropertyIris.forEach(function(iri) {
+                            self.propertyIriToCompoundProperty[iri] = p;
+                            self.dependentPropertyIris.push(iri);
+                        })
+                    }
+                });
+                self.dependentPropertyIris = _.uniq(self.dependentPropertyIris);
+
                 self.ontologyRelationships = ontologyRelationships;
                 self.update(properties);
             });
@@ -282,46 +371,55 @@ define([
                 ]).done(function(results) {
                     var ontology = results[0],
                         auditHistory = results[1],
-                        audits = _.sortBy(auditHistory, function(a) {
-                            return new Date(a.dateTime).getTime() * -1;
-                        }),
-                        auditGroups = _.groupBy(audits, function(a) {
-                            if (a.entityAudit) {
-                               if (a.entityAudit.analyzedBy) {
-                                   a.data.displayType = a.entityAudit.analyzedBy;
-                               }
-                            }
+                        auditGroups = _.chain(auditHistory)
+                            .sortBy(function(a) {
+                                return new Date(a.dateTime).getTime() * -1;
+                            })
+                            .groupBy(function(a) {
+                                if (a.data.type && a.data.type in ontology.concepts.byId) {
+                                    var ontologyConcept = ontology.concepts.byId[a.data.type];
+                                    if (ontologyConcept) {
+                                        a.data.displayType = ontologyConcept.displayName;
+                                    }
+                                }
 
-                            if (a.propertyAudit) {
-                                a.propertyAudit.isVisibility =
-                                    a.propertyAudit.propertyName === 'http://lumify.io#visibilityJson';
-                                a.propertyAudit.visibilityValue = a.propertyAudit.propertyMetadata &&
-                                    a.propertyAudit.propertyMetadata['http://lumify.io#visibilityJson'];
-                                a.propertyAudit.formattedValue = F.vertex.displayProp({
-                                    name: a.propertyAudit.propertyName,
-                                    value: a.propertyAudit.newValue || a.propertyAudit.previousValue
-                                });
-                                a.propertyAudit.isDeleted = a.propertyAudit.newValue === '';
+                                if (a.entityAudit) {
+                                   if (a.entityAudit.analyzedBy) {
+                                       a.data.displayType = a.entityAudit.analyzedBy;
+                                   }
+                                }
 
-                                return 'property';
-                            }
+                                if (a.propertyAudit) {
+                                    a.propertyAudit.isVisibility =
+                                        a.propertyAudit.propertyName === 'http://lumify.io#visibilityJson';
+                                    a.propertyAudit.visibilityValue = a.propertyAudit.propertyMetadata &&
+                                        a.propertyAudit.propertyMetadata['http://lumify.io#visibilityJson'];
+                                    a.propertyAudit.formattedValue = F.vertex.propFromAudit(
+                                        self.attr.data,
+                                        a.propertyAudit
+                                    );
+                                    a.propertyAudit.isDeleted = a.propertyAudit.newValue === '';
 
-                            if (a.relationshipAudit) {
-                                a.relationshipAudit.sourceIsCurrent =
-                                    a.relationshipAudit.sourceId === self.attr.data.id;
-                                a.relationshipAudit.sourceHref = F.vertexUrl.fragmentUrl(
-                                    [a.relationshipAudit.sourceId], lumifyData.currentWorkspaceId);
-                                a.relationshipAudit.sourceInfo =
-                                    self.createInfoJsonFromAudit(a.relationshipAudit, 'source');
+                                    return 'property';
+                                }
 
-                                a.relationshipAudit.destInfo =
-                                    self.createInfoJsonFromAudit(a.relationshipAudit, 'dest');
-                                a.relationshipAudit.destHref = F.vertexUrl.fragmentUrl(
-                                    [a.relationshipAudit.destId], lumifyData.currentWorkspaceId);
-                            }
+                                if (a.relationshipAudit) {
+                                    a.relationshipAudit.sourceIsCurrent =
+                                        a.relationshipAudit.sourceId === self.attr.data.id;
+                                    a.relationshipAudit.sourceHref = F.vertexUrl.fragmentUrl(
+                                        [a.relationshipAudit.sourceId], lumifyData.currentWorkspaceId);
+                                    a.relationshipAudit.sourceInfo =
+                                        self.createInfoJsonFromAudit(a.relationshipAudit, 'source');
 
-                            return 'other';
-                        });
+                                    a.relationshipAudit.destInfo =
+                                        self.createInfoJsonFromAudit(a.relationshipAudit, 'dest');
+                                    a.relationshipAudit.destHref = F.vertexUrl.fragmentUrl(
+                                        [a.relationshipAudit.destId], lumifyData.currentWorkspaceId);
+                                }
+
+                                return 'other';
+                            })
+                            .value();
 
                     self.select('entityAuditsSelector')
                         .empty()
@@ -396,7 +494,7 @@ define([
         this.onEdgesUpdated = function(event, data) {
             var edge = _.findWhere(data.edges, { id: this.attr.data.id });
             if (edge) {
-                this.attr.data.properties = edge.properties;
+                this.attr.data = edge;
                 this.update(edge.properties);
             }
         };
@@ -404,35 +502,38 @@ define([
         this.onVerticesUpdated = function(event, data) {
             var vertex = _.findWhere(data.vertices, { id: this.attr.data.id });
             if (vertex) {
-                this.attr.data.properties = vertex.properties;
+                this.attr.data = vertex;
                 this.update(vertex.properties)
             }
         };
 
         this.onDeleteProperty = function(event, data) {
-            var self = this;
+            var self = this,
+                vertexId = data.vertexId || this.attr.data.id;
 
             this.dataRequest(
                     F.vertex.isEdge(this.attr.data) ? 'edge' : 'vertex',
                     'deleteProperty',
-                    this.attr.data.id, data.property
+                    vertexId, data.property
                 ).then(this.closePropertyForm.bind(this))
                  .catch(this.requestFailure.bind(this, event.target))
         };
 
         this.onAddProperty = function(event, data) {
+            var vertexId = data.vertexId || this.attr.data.id;
+
             if (data.property.name === 'http://lumify.io#visibilityJson') {
                 if (data.isEdge) {
-                    this.dataRequest('edge', 'setVisibility', this.attr.data.id, data.property.visibilitySource)
+                    this.dataRequest('edge', 'setVisibility', vertexId, data.property.visibilitySource)
                         .then(this.closePropertyForm.bind(this))
                         .catch(this.requestFailure.bind(this))
                 } else {
-                    this.dataRequest('vertex', 'setVisibility', this.attr.data.id, data.property.visibilitySource)
+                    this.dataRequest('vertex', 'setVisibility', vertexId, data.property.visibilitySource)
                         .then(this.closePropertyForm.bind(this))
                         .catch(this.requestFailure.bind(this));
                 }
             } else {
-                this.dataRequest('vertex', 'setProperty', this.attr.data.id, data.property)
+                this.dataRequest('vertex', 'setProperty', vertexId, data.property)
                     .then(this.closePropertyForm.bind(this))
                     .catch(this.requestFailure.bind(this));
             }
@@ -440,11 +541,11 @@ define([
         };
 
         this.closePropertyForm = function() {
-            this.$node.find('.underneath').teardownComponent(PropertyForm);
+            this.$node.closest('.type-content').find('.underneath').teardownComponent(PropertyForm);
         };
 
         this.requestFailure = function(error) {
-            var target = this.$node.find('.underneath');
+            var target = this.$node.closest('.type-content').find('.underneath');
             this.trigger(target, 'propertyerror', { error: error });
         };
 
@@ -520,7 +621,7 @@ define([
             this.reload();
         } else if ($target.is('.info')) {
             var datum = d3.select($target.closest('.property-value').get(0)).datum();
-            this.showPropertyInfo($target, this.attr.data.id, datum.property);
+            this.showPropertyInfo($target, this.attr.data, datum.property);
         } else {
             processed = false;
         }
@@ -531,7 +632,7 @@ define([
         }
     }
 
-    function createPropertyGroups(vertexId, ontologyProperties, showMoreExpanded, maxItemsBeforeHidden) {
+    function createPropertyGroups(vertex, ontologyProperties, showMoreExpanded, maxItemsBeforeHidden) {
         this.enter()
             .insert('tbody', '.buttons-row')
             .attr('class', function(d, groupIndex, j) {
@@ -542,6 +643,8 @@ define([
 
                 return cls + ' collapsed';
             });
+
+        this.order();
 
         var totalPropertyCountsByName = {};
 
@@ -570,7 +673,7 @@ define([
             })
             .call(
                 _.partial(createProperties,
-                          vertexId,
+                          vertex,
                           ontologyProperties,
                           totalPropertyCountsByName,
                           maxItemsBeforeHidden,
@@ -581,7 +684,7 @@ define([
         this.exit().remove();
     }
 
-    function createProperties(vertexId,
+    function createProperties(vertex,
                               ontologyProperties,
                               totalPropertyCountsByName,
                               maxItemsBeforeHidden,
@@ -596,7 +699,11 @@ define([
                 return 'property-row property-row-' + F.className.to(datum.name + datum.key);
             });
 
-        var currentPropertyIndex = 0, lastPropertyName = '';
+        this.order();
+
+        var currentPropertyIndex = 0,
+            lastPropertyName = '';
+
         this.selectAll('td')
             .data(function(datum, i, j) {
                 if (_.isString(datum[0])) {
@@ -630,17 +737,16 @@ define([
                     }
                 ];
             })
-            .call(_.partial(createPropertyRow, vertexId, ontologyProperties, maxItemsBeforeHidden));
+            .call(_.partial(createPropertyRow, vertex, ontologyProperties, maxItemsBeforeHidden));
 
         this.exit().remove();
     }
 
-    function createPropertyRow(vertexId, ontologyProperties, maxItemsBeforeHidden) {
+    function createPropertyRow(vertex, ontologyProperties, maxItemsBeforeHidden) {
         this.enter()
             .append('td')
-            .each(function() {
-                var self = d3.select(this),
-                    datum = self.datum();
+            .each(function(datum) {
+                var self = d3.select(this);
                 switch (datum.type) {
                     case GROUP:
                         self.append('h1')
@@ -661,6 +767,8 @@ define([
                         break;
                 }
             });
+
+        this.order();
 
         this.attr('class', function(datum) {
                 if (datum.type === NAME) {
@@ -723,13 +831,13 @@ define([
                             return i18n('visibility.label');
                         }
 
+                        if (d.property.displayName) {
+                            return d.property.displayName;
+                        }
+
                         var ontologyProperty = ontologyProperties.byTitle[d.name];
                         if (ontologyProperty) {
                             return ontologyProperty.displayName;
-                        }
-
-                        if (d.property.displayName) {
-                            return d.property.displayName;
                         }
 
                         console.warn('No ontology definition for ', d.name);
@@ -758,7 +866,7 @@ define([
                             F.vertex.properties.visibility(
                                 visibilitySpan,
                                 { value: property.metadata && property.metadata[VISIBILITY_NAME] },
-                                vertexId);
+                                vertex.id);
                         }
 
                         $infoButton.toggle(Boolean(
@@ -767,22 +875,19 @@ define([
                         ));
 
                         if (displayType && F.vertex.properties[displayType]) {
-                            F.vertex.properties[displayType](valueSpan, property, vertexId);
-                            return;
+                            F.vertex.properties[displayType](valueSpan, property, vertex.id);
                         } else if (dataType && F.vertex.properties[dataType]) {
-                            F.vertex.properties[dataType](valueSpan, property, vertexId);
-                            return;
-                        }
-
-                        if (isJustification(property)) {
+                            F.vertex.properties[dataType](valueSpan, property, vertex.id);
+                        } else if (isJustification(property)) {
                             require(['util/vertex/justification/viewer'], function(JustificationViewer) {
                                 $(valueSpan).teardownAllComponents();
                                 JustificationViewer.attachTo(valueSpan, property.justificationData);
                             });
-                            return;
+                        } else if (isSandboxStatus(property) || isRelationshipLabel(property)) {
+                            valueSpan.textContent = property.value;
+                        } else {
+                            valueSpan.textContent = F.vertex.prop(vertex, property.name, property.key);
                         }
-
-                        valueSpan.textContent = F.vertex.displayProp(property);
                     });
 
                 this.select('.property-value .show-more')

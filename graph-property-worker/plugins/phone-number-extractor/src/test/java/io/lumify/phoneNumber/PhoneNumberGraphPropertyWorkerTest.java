@@ -6,8 +6,10 @@ import io.lumify.core.config.HashMapConfigurationLoader;
 import io.lumify.core.ingest.graphProperty.GraphPropertyWorkData;
 import io.lumify.core.ingest.graphProperty.GraphPropertyWorkerPrepareData;
 import io.lumify.core.ingest.graphProperty.TermMentionFilter;
+import io.lumify.core.model.ontology.OntologyRepository;
 import io.lumify.core.model.properties.LumifyProperties;
 import io.lumify.core.model.termMention.TermMentionRepository;
+import io.lumify.core.model.workQueue.WorkQueueRepository;
 import io.lumify.core.security.DirectVisibilityTranslator;
 import io.lumify.core.security.VisibilityTranslator;
 import io.lumify.core.user.User;
@@ -32,6 +34,7 @@ import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.when;
 import static org.securegraph.util.IterableUtils.toList;
 
 @RunWith(MockitoJUnitRunner.class)
@@ -42,6 +45,12 @@ public class PhoneNumberGraphPropertyWorkerTest {
 
     @Mock
     private User user;
+
+    @Mock
+    private OntologyRepository ontologyRepository;
+
+    @Mock
+    private WorkQueueRepository workQueueRepository;
 
     private PhoneNumberGraphPropertyWorker extractor;
     private InMemoryAuthorizations authorizations;
@@ -54,19 +63,23 @@ public class PhoneNumberGraphPropertyWorkerTest {
     public void setUp() throws Exception {
 
         Map config = new HashMap();
-        config.put(io.lumify.core.config.Configuration.ONTOLOGY_IRI_PERSON, "http://lumify.io/test#person");
-        config.put(io.lumify.core.config.Configuration.ONTOLOGY_IRI_LOCATION, "http://lumify.io/test#location");
-        config.put(io.lumify.core.config.Configuration.ONTOLOGY_IRI_ORGANIZATION, "http://lumify.io/test#organization");
-        config.put(io.lumify.core.config.Configuration.ONTOLOGY_IRI_ARTIFACT_HAS_ENTITY, "http://lumify.io/test#artifactHasEntity");
-        config.put(PhoneNumberGraphPropertyWorker.CONFIG_PHONE_NUMBER_IRI, "http://lumify.io/test#phoneNumber");
+        config.put("ontology.intent.concept.person", "http://lumify.io/test#person");
+        config.put("ontology.intent.concept.location", "http://lumify.io/test#location");
+        config.put("ontology.intent.concept.organization", "http://lumify.io/test#organization");
+        config.put("ontology.intent.relationship.artifactHasEntity", "http://lumify.io/test#artifactHasEntity");
+        config.put("ontology.intent.concept.phoneNumber", "http://lumify.io/test#phoneNumber");
         io.lumify.core.config.Configuration configuration = new HashMapConfigurationLoader(config).createConfiguration();
+
+        when(ontologyRepository.getRequiredConceptIRIByIntent("phoneNumber")).thenReturn("http://lumify.io/test#phoneNumber");
 
         extractor = new PhoneNumberGraphPropertyWorker();
         extractor.setConfiguration(configuration);
         extractor.setVisibilityTranslator(visibilityTranslator);
+        extractor.setOntologyRepository(ontologyRepository);
+        extractor.setWorkQueueRepository(workQueueRepository);
 
         FileSystem hdfsFileSystem = null;
-        authorizations = new InMemoryAuthorizations(TermMentionRepository.VISIBILITY);
+        authorizations = new InMemoryAuthorizations(TermMentionRepository.VISIBILITY_STRING);
         Injector injector = null;
         List<TermMentionFilter> termMentionFilters = new ArrayList<TermMentionFilter>();
         GraphPropertyWorkerPrepareData workerPrepareData = new GraphPropertyWorkerPrepareData(config, termMentionFilters, hdfsFileSystem, user, authorizations, injector);

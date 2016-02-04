@@ -4,7 +4,9 @@ import com.google.common.base.Function;
 import com.google.common.collect.Iterables;
 import com.google.inject.Inject;
 import io.lumify.core.config.Configuration;
-import io.lumify.core.model.notification.*;
+import io.lumify.core.model.notification.ExpirationAge;
+import io.lumify.core.model.notification.ExpirationAgeUnit;
+import io.lumify.core.model.notification.UserNotificationRepository;
 import io.lumify.core.model.user.UserRepository;
 import io.lumify.core.model.workQueue.WorkQueueRepository;
 import io.lumify.core.model.workspace.Workspace;
@@ -25,8 +27,6 @@ import javax.annotation.Nullable;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.text.MessageFormat;
-import java.util.Calendar;
-import java.util.Date;
 import java.util.List;
 import java.util.ResourceBundle;
 
@@ -117,11 +117,8 @@ public class WorkspaceUpdate extends BaseRequestHandler {
         }
     }
 
-    private void deleteEntities(Workspace workspace, List<String> entityDeletes, User authUser) {
-        for (String entityId : entityDeletes) {
-            LOGGER.debug("workspace delete (%s): %s", workspace.getWorkspaceId(), entityId);
-            workspaceRepository.softDeleteEntityFromWorkspace(workspace, entityId, authUser);
-        }
+    private void deleteEntities(Workspace workspace, List<String> entityIdsToDelete, User authUser) {
+        workspaceRepository.softDeleteEntitiesFromWorkspace(workspace, entityIdsToDelete, authUser);
     }
 
     private void updateEntities(Workspace workspace, List<ClientApiWorkspaceUpdateData.EntityUpdate> entityUpdates, User authUser) {

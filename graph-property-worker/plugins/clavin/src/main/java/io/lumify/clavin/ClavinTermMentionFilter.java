@@ -8,7 +8,6 @@ import com.bericotech.clavin.resolver.LuceneLocationResolver;
 import com.bericotech.clavin.resolver.ResolvedLocation;
 import com.google.inject.Inject;
 import io.lumify.core.config.Configuration;
-import io.lumify.core.exception.LumifyException;
 import io.lumify.core.ingest.graphProperty.TermMentionFilter;
 import io.lumify.core.ingest.graphProperty.TermMentionFilterPrepareData;
 import io.lumify.core.model.audit.AuditAction;
@@ -78,10 +77,6 @@ public class ClavinTermMentionFilter extends TermMentionFilter {
      */
     public static final boolean DEFAULT_FUZZY_MATCHING = false;
 
-    private static final String CONFIG_STATE_IRI = "ontology.iri.state";
-    private static final String CONFIG_COUNTRY_IRI = "ontology.iri.country";
-    private static final String CONFIG_CITY_IRI = "ontology.iri.city";
-    private static final String CONFIG_GEO_LOCATION_IRI = "ontology.iri.geoLocation";
     private static final String CONFIG_EXCLUDED_IRI_PREFIX = "clavin.excludeIri";
 
     private LuceneLocationResolver resolver;
@@ -102,7 +97,7 @@ public class ClavinTermMentionFilter extends TermMentionFilter {
         super.prepare(termMentionFilterPrepareData);
 
         LOGGER.info("Configuring CLAVIN Location Resolution.");
-        prepareIris(termMentionFilterPrepareData);
+        prepareIris();
         prepareClavinLuceneIndex(getConfiguration());
         prepareFuzzy(getConfiguration());
         prepareTargetConcepts(getConfiguration());
@@ -112,10 +107,10 @@ public class ClavinTermMentionFilter extends TermMentionFilter {
     public void prepareTargetConcepts(Configuration config) {
         Set<String> excludedIris = getExcludedIris(config);
 
-        Set<String> conceptsWithGeoLocationProperty = new HashSet<String>();
+        Set<String> conceptsWithGeoLocationProperty = new HashSet<>();
         for (Concept concept : ontologyRepository.getConceptsWithProperties()) {
             for (OntologyProperty property : concept.getProperties()) {
-                String iri = concept.getTitle();
+                String iri = concept.getIRI();
                 if (property.getDataType() == PropertyType.GEO_LOCATION && !excludedIris.contains(iri)) {
                     conceptsWithGeoLocationProperty.add(iri);
                     break;
@@ -126,7 +121,7 @@ public class ClavinTermMentionFilter extends TermMentionFilter {
     }
 
     private Set<String> getExcludedIris(Configuration config) {
-        Set<String> excludedIris = new HashSet<String>();
+        Set<String> excludedIris = new HashSet<>();
         excludedIris.addAll(config.getSubset(CONFIG_EXCLUDED_IRI_PREFIX).values());
         return excludedIris;
     }
@@ -172,31 +167,12 @@ public class ClavinTermMentionFilter extends TermMentionFilter {
         resolver = new LuceneLocationResolver(indexDirectory, maxHitDepth, maxContextWindow);
     }
 
-    public void prepareIris(TermMentionFilterPrepareData termMentionFilterPrepareData) {
-        this.artifactHasEntityIri = getConfiguration().get(Configuration.ONTOLOGY_IRI_ARTIFACT_HAS_ENTITY, null);
-        if (this.artifactHasEntityIri == null) {
-            throw new LumifyException("Could not find configuration for " + Configuration.ONTOLOGY_IRI_ARTIFACT_HAS_ENTITY);
-        }
-
-        stateIri = (String) termMentionFilterPrepareData.getConfiguration().get(CONFIG_STATE_IRI);
-        if (stateIri == null || stateIri.length() == 0) {
-            throw new LumifyException("Could not find config: " + CONFIG_STATE_IRI);
-        }
-
-        countryIri = (String) termMentionFilterPrepareData.getConfiguration().get(CONFIG_COUNTRY_IRI);
-        if (countryIri == null || countryIri.length() == 0) {
-            throw new LumifyException("Could not find config: " + CONFIG_COUNTRY_IRI);
-        }
-
-        cityIri = (String) termMentionFilterPrepareData.getConfiguration().get(CONFIG_CITY_IRI);
-        if (cityIri == null || cityIri.length() == 0) {
-            throw new LumifyException("Could not find config: " + CONFIG_CITY_IRI);
-        }
-
-        geoLocationIri = (String) termMentionFilterPrepareData.getConfiguration().get(CONFIG_GEO_LOCATION_IRI);
-        if (geoLocationIri == null || geoLocationIri.length() == 0) {
-            throw new LumifyException("Could not find config: " + CONFIG_GEO_LOCATION_IRI);
-        }
+    private void prepareIris() {
+        artifactHasEntityIri = ontologyRepository.getRequiredRelationshipIRIByIntent("artifactHasEntity");
+        stateIri = ontologyRepository.getRequiredConceptIRIByIntent("state");
+        countryIri = ontologyRepository.getRequiredConceptIRIByIntent("country");
+        cityIri = ontologyRepository.getRequiredConceptIRIByIntent("city");
+        geoLocationIri = ontologyRepository.getRequiredPropertyIRIByIntent("geoLocation");
     }
 
     @Override
@@ -210,7 +186,7 @@ public class ClavinTermMentionFilter extends TermMentionFilter {
             return;
         }
 
-        Map<Integer, ResolvedLocation> resolvedLocationOffsetMap = new HashMap<Integer, ResolvedLocation>();
+        Map<Integer, ResolvedLocation> resolvedLocationOffsetMap = new HashMap<>();
         for (ResolvedLocation resolvedLocation : resolvedLocationNames) {
             // assumes start/end positions are real, i.e., unique start positions for each extracted term
             resolvedLocationOffsetMap.put(resolvedLocation.getLocation().getPosition(), resolvedLocation);
@@ -274,7 +250,7 @@ public class ClavinTermMentionFilter extends TermMentionFilter {
     }
 
     private List<LocationOccurrence> getLocationOccurrencesFromTermMentions(final Iterable<Vertex> termMentions) {
-        List<LocationOccurrence> locationOccurrences = new ArrayList<LocationOccurrence>();
+        List<LocationOccurrence> locationOccurrences = new ArrayList<>();
 
         for (Vertex termMention : termMentions) {
             if (isLocation(termMention)) {

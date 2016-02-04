@@ -1,7 +1,9 @@
 package io.lumify.rdf;
 
+import com.hp.hpl.jena.datatypes.RDFDatatype;
+import com.hp.hpl.jena.datatypes.xsd.XSDDatatype;
+import com.hp.hpl.jena.datatypes.xsd.XSDDateTime;
 import com.hp.hpl.jena.rdf.model.*;
-import io.lumify.core.config.Configuration;
 import io.lumify.core.exception.LumifyException;
 import io.lumify.core.ingest.graphProperty.GraphPropertyWorkData;
 import io.lumify.core.ingest.graphProperty.GraphPropertyWorker;
@@ -16,6 +18,8 @@ import org.securegraph.Property;
 import org.securegraph.property.StreamingPropertyValue;
 
 import java.io.*;
+import java.util.ArrayList;
+import java.util.List;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -30,11 +34,10 @@ public class RdfGraphPropertyWorker extends GraphPropertyWorker {
     public void prepare(GraphPropertyWorkerPrepareData workerPrepareData) throws Exception {
         super.prepare(workerPrepareData);
 
-        hasEntityIri = getConfiguration().get(Configuration.ONTOLOGY_IRI_ARTIFACT_HAS_ENTITY, null);
-        checkNotNull(hasEntityIri, "configuration " + Configuration.ONTOLOGY_IRI_ARTIFACT_HAS_ENTITY + " is required");
+        hasEntityIri = getOntologyRepository().getRequiredRelationshipIRIByIntent("artifactHasEntity");
 
         // rdfConceptTypeIri is not required because the concept type could have been set by some other means.
-        rdfConceptTypeIri = getConfiguration().get(Configuration.ONTOLOGY_IRI_PREFIX + "rdf", null);
+        rdfConceptTypeIri = getOntologyRepository().getConceptIRIByIntent("rdf");
     }
 
     @Override
@@ -61,34 +64,51 @@ public class RdfGraphPropertyWorker extends GraphPropertyWorker {
     }
 
     public void importRdf(Graph graph, File inputFile, GraphPropertyWorkData data, Visibility visibility, Authorizations authorizations) throws IOException {
-        InputStream in = new FileInputStream(inputFile);
-        try {
+        try (InputStream in = new FileInputStream(inputFile)) {
             File baseDir = inputFile.getParentFile();
             importRdf(graph, in, baseDir, data, visibility, authorizations);
-        } finally {
-            in.close();
         }
     }
 
-    public void importRdf(Graph graph, InputStream in, File baseDir, GraphPropertyWorkData data, Visibility visibility, Authorizations authorizations) {
+    private void importRdf(Graph graph, InputStream in, File baseDir, GraphPropertyWorkData data, Visibility visibility, Authorizations authorizations) {
         if (rdfConceptTypeIri != null && data != null) {
             LumifyProperties.CONCEPT_TYPE.setProperty(data.getElement(), rdfConceptTypeIri, data.createPropertyMetadata(), visibility, getAuthorizations());
         }
 
         Model model = ModelFactory.createDefaultModel();
         model.read(in, null);
-        importRdfModel(graph, model, baseDir, data, visibility, authorizations);
-    }
 
-    public void importRdfModel(Graph graph, Model model, File baseDir, GraphPropertyWorkData data, Visibility visibility, Authorizations authorizations) {
-        ResIterator subjects = model.listSubjects();
-        while (subjects.hasNext()) {
-            Resource subject = subjects.next();
-            importSubject(graph, subject, baseDir, data, visibility, authorizations);
+        Results results = new Results();
+        importRdfModel(results, graph, model, baseDir, data, visibility, authorizations);
+
+        graph.flush();
+
+        LOGGER.debug("pushing vertices from RDF import on to work queue");
+        for (Vertex vertex : results.getVertices()) {
+            getWorkQueueRepository().pushElement(vertex);
+            for (Property prop : vertex.getProperties()) {
+                getWorkQueueRepository().pushGraphPropertyQueue(vertex, prop);
+            }
+        }
+
+        LOGGER.debug("pushing edges from RDF import on to work queue");
+        for (Edge edge : results.getEdges()) {
+            getWorkQueueRepository().pushElement(edge);
+            for (Property prop : edge.getProperties()) {
+                getWorkQueueRepository().pushGraphPropertyQueue(edge, prop);
+            }
         }
     }
 
-    public void importSubject(Graph graph, Resource subject, File baseDir, GraphPropertyWorkData data, Visibility visibility, Authorizations authorizations) {
+    private void importRdfModel(Results results, Graph graph, Model model, File baseDir, GraphPropertyWorkData data, Visibility visibility, Authorizations authorizations) {
+        ResIterator subjects = model.listSubjects();
+        while (subjects.hasNext()) {
+            Resource subject = subjects.next();
+            importSubject(results, graph, subject, baseDir, data, visibility, authorizations);
+        }
+    }
+
+    private void importSubject(Results results, Graph graph, Resource subject, File baseDir, GraphPropertyWorkData data, Visibility visibility, Authorizations authorizations) {
         LOGGER.info("importSubject: %s", subject.toString());
         String graphVertexId = getGraphVertexId(subject);
         VertexBuilder vertexBuilder = graph.prepareVertex(graphVertexId, visibility);
@@ -118,12 +138,13 @@ public class RdfGraphPropertyWorker extends GraphPropertyWorker {
         }
 
         Vertex v = vertexBuilder.save(authorizations);
+        results.addVertex(v);
 
         if (data != null) {
             String edgeId = data.getElement().getId() + "_hasEntity_" + v.getId();
             EdgeBuilder e = graph.prepareEdge(edgeId, (Vertex) data.getElement(), v, hasEntityIri, visibility);
             data.setVisibilityJsonOnElement(e);
-            e.save(authorizations);
+            results.addEdge(e.save(authorizations));
 
             addVertexToWorkspaceIfNeeded(data, v);
         }
@@ -136,7 +157,7 @@ public class RdfGraphPropertyWorker extends GraphPropertyWorker {
                 if (isConceptTypeResource(statement)) {
                     continue;
                 }
-                importResource(graph, v, statement, data, visibility, authorizations);
+                importResource(results, graph, v, statement, data, visibility, authorizations);
             }
         }
     }
@@ -148,12 +169,21 @@ public class RdfGraphPropertyWorker extends GraphPropertyWorker {
 
     private void importLiteral(VertexBuilder v, Statement statement, File baseDir, GraphPropertyWorkData data, Visibility visibility) {
         String propertyName = statement.getPredicate().toString();
-        String valueString = statement.getLiteral().toString();
-        Object value = valueString;
-        String propertyKey = RdfGraphPropertyWorker.class.getName() + "_" + hashValue(valueString);
 
-        if (valueString.startsWith("streamingValue:")) {
-            value = convertStreamingValueJsonToValueObject(baseDir, valueString);
+        RDFDatatype datatype = statement.getLiteral().getDatatype();
+        Object literalValue = statement.getLiteral().getValue();
+        Object value = literalValue;
+        String propertyKey = RdfGraphPropertyWorker.class.getName() + "_" + hashValue(value.toString());
+        if (datatype == null || XSDDatatype.XSDstring.equals(datatype)) {
+            String valueString = statement.getLiteral().toString();
+            if (valueString.startsWith("streamingValue:")) {
+                value = convertStreamingValueJsonToValueObject(baseDir, valueString);
+            }
+        } else if (literalValue instanceof XSDDateTime) {
+            XSDDateTime xsdDateTime = (XSDDateTime) literalValue;
+            value = xsdDateTime.asCalendar().getTime();
+        } else {
+            throw new LumifyException("unsupported XSDDatatype: " + datatype.getURI());
         }
 
         Metadata metadata = null;
@@ -190,7 +220,7 @@ public class RdfGraphPropertyWorker extends GraphPropertyWorker {
         return spv;
     }
 
-    private void importResource(Graph graph, Vertex outVertex, Statement statement, GraphPropertyWorkData data, Visibility visibility, Authorizations authorizations) {
+    private void importResource(Results results, Graph graph, Vertex outVertex, Statement statement, GraphPropertyWorkData data, Visibility visibility, Authorizations authorizations) {
         String label = statement.getPredicate().toString();
         String vertexId = getGraphVertexId(statement.getResource());
         VertexBuilder inVertexBuilder = graph.prepareVertex(vertexId, visibility);
@@ -198,6 +228,7 @@ public class RdfGraphPropertyWorker extends GraphPropertyWorker {
             data.setVisibilityJsonOnElement(inVertexBuilder);
         }
         Vertex inVertex = inVertexBuilder.save(authorizations);
+        results.addVertex(inVertex);
         if (data != null) {
             addVertexToWorkspaceIfNeeded(data, inVertex);
         }
@@ -207,15 +238,40 @@ public class RdfGraphPropertyWorker extends GraphPropertyWorker {
         if (data != null) {
             data.setVisibilityJsonOnElement(e);
         }
-        e.save(authorizations);
+        results.addEdge(e.save(authorizations));
         LOGGER.info("importResource: %s = %s", label, vertexId);
     }
 
+    /**
+     * RDF requires that all subjects are URIs. To create more portable ids,
+     * this method will look for the last '#' character and return everything after that.
+     */
     private String getGraphVertexId(Resource subject) {
         String subjectUri = subject.getURI();
         checkNotNull(subjectUri, "could not get uri of subject: " + subject);
         int lastPound = subjectUri.lastIndexOf('#');
         checkArgument(lastPound >= 1, "Could not find '#' in subject uri: " + subjectUri);
         return subjectUri.substring(lastPound + 1);
+    }
+
+    private static class Results {
+        private final List<Vertex> vertices = new ArrayList<>();
+        private final List<Edge> edges = new ArrayList<>();
+
+        public void addEdge(Edge edge) {
+            this.edges.add(edge);
+        }
+
+        public void addVertex(Vertex vertex) {
+            this.vertices.add(vertex);
+        }
+
+        public Iterable<Edge> getEdges() {
+            return edges;
+        }
+
+        public Iterable<Vertex> getVertices() {
+            return vertices;
+        }
     }
 }

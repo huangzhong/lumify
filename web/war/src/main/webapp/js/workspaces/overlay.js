@@ -62,6 +62,7 @@ define([
 
             this.on(document, 'verticesUpdated', this.updateDiffBadge);
             this.on(document, 'verticesAdded', this.updateDiffBadge);
+            this.on(document, 'verticesDeleted', this.updateDiffBadge);
             this.on(document, 'edgesUpdated', this.updateDiffBadge);
             this.on(document, 'edgesDeleted', this.updateDiffBadge);
             this.on(document, 'updateDiff', this.updateDiffBadge);
@@ -162,6 +163,9 @@ define([
         this.onWorkspaceUpdated = function(event, data) {
             if (lumifyData.currentWorkspaceId === data.workspace.workspaceId) {
                 this.updateWithNewWorkspaceData(data.workspace);
+            }
+            if (data.newVertices.length) {
+                this.updateDiffBadge();
             }
         };
 
@@ -393,7 +397,9 @@ define([
                             'hbs!workspaces/userAccount/modal',
                             'workspaces/userAccount/userAccount'
                         ], function(modalTemplate, UserAccount) {
-                            var modal = $(modalTemplate({})).appendTo(document.body);
+                            var modal = $(modalTemplate({
+                                userName: lumifyData.currentUser.userName
+                            })).appendTo(document.body);
                             UserAccount.attachTo(modal);
                             modal.modal('show');
                         });

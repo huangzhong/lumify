@@ -102,18 +102,18 @@ define([
                     edges = results.shift(),
                     edge = edges[0];
 
+                if (!edge) {
+                    return self.trigger('selectObjects');
+                }
+
                 self.ontologyRelationships = ontology.relationships;
                 self.edge = edge;
                 $.extend(edge.source, {
-                    concept: ontology.concepts.byId[
-                        _.findWhere(edge.source.properties, predicate).value
-                    ]
+                    concept: F.vertex.concept(edge.source)
                 });
 
                 $.extend(edge.target, {
-                    concept: ontology.concepts.byId[
-                        _.findWhere(edge.target.properties, predicate).value
-                    ]
+                    concept: F.vertex.concept(edge.target)
                 });
                 self.$node.html(template({}));
                 self.update();
@@ -134,7 +134,17 @@ define([
                                 Toolbar.ITEMS.ADD_COMMENT
                             ]
                         },
-                        Toolbar.ITEMS.AUDIT,
+                        {
+                            icon: 'img/glyphicons/white/glyphicons_157_show_lines@2x.png',
+                            right: true,
+                            submenu: [
+                                Toolbar.ITEMS.AUDIT,
+                                _.extend(Toolbar.ITEMS.DELETE_ITEM, {
+                                    title: i18n('detail.toolbar.delete.edge'),
+                                    subtitle: i18n('detail.toolbar.delete.edge.subtitle')
+                                })
+                            ]
+                        }
                     ]
                 });
 
@@ -151,7 +161,7 @@ define([
         this.onPaneClicked = function(evt) {
             var $target = $(evt.target);
 
-            if ($target.is('.entity, .artifact, span.relationship')) {
+            if ($target.is('.vertex, .artifact, span.relationship')) {
                 var id = $target.data('vertexId');
                 this.trigger(document, 'selectObjects', { vertexIds: [id] });
                 evt.stopPropagation();

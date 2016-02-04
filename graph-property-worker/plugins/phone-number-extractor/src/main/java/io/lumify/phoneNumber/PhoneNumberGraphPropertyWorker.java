@@ -4,7 +4,6 @@ import com.google.common.base.Charsets;
 import com.google.common.io.CharStreams;
 import com.google.i18n.phonenumbers.PhoneNumberMatch;
 import com.google.i18n.phonenumbers.PhoneNumberUtil;
-import io.lumify.core.exception.LumifyException;
 import io.lumify.core.ingest.graphProperty.GraphPropertyWorkData;
 import io.lumify.core.ingest.graphProperty.GraphPropertyWorker;
 import io.lumify.core.ingest.graphProperty.GraphPropertyWorkerPrepareData;
@@ -26,7 +25,6 @@ import static org.securegraph.util.IterableUtils.count;
 
 public class PhoneNumberGraphPropertyWorker extends GraphPropertyWorker {
     private static final LumifyLogger LOGGER = LumifyLoggerFactory.getLogger(PhoneNumberGraphPropertyWorker.class);
-    public static final String CONFIG_PHONE_NUMBER_IRI = "ontology.iri.phoneNumber";
     public static final String DEFAULT_REGION_CODE = "phoneNumber.defaultRegionCode";
     public static final String DEFAULT_DEFAULT_REGION_CODE = "US";
 
@@ -43,10 +41,7 @@ public class PhoneNumberGraphPropertyWorker extends GraphPropertyWorker {
             defaultRegionCode = DEFAULT_DEFAULT_REGION_CODE;
         }
 
-        entityType = (String) workerPrepareData.getConfiguration().get(CONFIG_PHONE_NUMBER_IRI);
-        if (entityType == null || entityType.length() == 0) {
-            throw new LumifyException("Could not find config: " + CONFIG_PHONE_NUMBER_IRI);
-        }
+        entityType = getOntologyRepository().getRequiredConceptIRIByIntent("phoneNumber");
     }
 
     @Override
@@ -58,7 +53,7 @@ public class PhoneNumberGraphPropertyWorker extends GraphPropertyWorker {
         Vertex sourceVertex = (Vertex) data.getElement();
         VisibilityJson visibilityJson = LumifyProperties.VISIBILITY_JSON.getPropertyValue(sourceVertex);
         final Iterable<PhoneNumberMatch> phoneNumbers = phoneNumberUtil.findNumbers(text, defaultRegionCode);
-        List<Vertex> termMentions = new ArrayList<Vertex>();
+        List<Vertex> termMentions = new ArrayList<>();
         for (final PhoneNumberMatch phoneNumber : phoneNumbers) {
             final String formattedNumber = phoneNumberUtil.format(phoneNumber.number(), PhoneNumberUtil.PhoneNumberFormat.E164);
             int start = phoneNumber.start();
@@ -78,6 +73,7 @@ public class PhoneNumberGraphPropertyWorker extends GraphPropertyWorker {
         }
         getGraph().flush();
         applyTermMentionFilters(sourceVertex, termMentions);
+        pushTextUpdated(data);
 
         LOGGER.debug("Number of phone numbers extracted: %d", count(phoneNumbers));
     }

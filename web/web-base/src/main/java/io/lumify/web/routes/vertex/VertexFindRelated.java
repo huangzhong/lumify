@@ -59,7 +59,7 @@ public class VertexFindRelated extends BaseRequestHandler {
                 throw new RuntimeException("Bad 'limitParentConceptId', no concept found for id: " + limitParentConceptId);
             }
             for (Concept con : limitConcepts) {
-                limitConceptIds.add(con.getTitle());
+                limitConceptIds.add(con.getIRI());
             }
         }
 
@@ -70,7 +70,9 @@ public class VertexFindRelated extends BaseRequestHandler {
         for (String id : graphVertexIds) {
             Iterable<Vertex> vertices = graph.getVertex(id, authorizations).getVertices(Direction.BOTH, limitEdgeLabel, authorizations);
             for (Vertex vertex : vertices) {
-                if (!visitedIds.add(vertex.getId())) continue;
+                if (!visitedIds.add(vertex.getId())) {
+                    continue;
+                }
                 if (limitConceptIds.size() == 0 || !isLimited(vertex, limitConceptIds)) {
                     if (count < maxVerticesToReturn) {
                         result.getVertices().add(ClientApiConverter.toClientApiVertex(vertex, workspaceId, authorizations));

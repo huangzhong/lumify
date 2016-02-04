@@ -65,7 +65,8 @@ define([
                         source: function() {
                             return _.chain(self.propertiesForSource)
                                     .filter(function(p) {
-                                        var visible = p.userVisible !== false;
+                                        var visible = p.userVisible !== false,
+                                            addable = p.addable !== false;
 
                                         if (self.attr.unsupportedProperties &&
                                             ~self.attr.unsupportedProperties.indexOf(p.title)) {
@@ -76,6 +77,10 @@ define([
                                             return false;
                                         }
 
+                                        if (~self.dependentPropertyIris.indexOf(p.title)) {
+                                            return false;
+                                        }
+
                                         if (self.attr.onlySearchable) {
                                             if (p.title === 'http://lumify.io#text') {
                                                 return true;
@@ -83,7 +88,7 @@ define([
                                             return visible && p.searchable !== false;
                                         }
 
-                                        return visible;
+                                        return visible && addable;
                                     })
                                     .map(function(p) {
                                         var name = displayName(p),
@@ -208,6 +213,11 @@ define([
 
             this.groupedByDisplay = _.groupBy(properties, displayName);
             this.propertiesForSource = properties;
+            this.dependentPropertyIris = _.chain(properties)
+                .pluck('dependentPropertyIris')
+                .compact()
+                .flatten()
+                .value();
         }
     }
 

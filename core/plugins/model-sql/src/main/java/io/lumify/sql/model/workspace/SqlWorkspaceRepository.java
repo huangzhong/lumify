@@ -27,6 +27,7 @@ import org.securegraph.util.ConvertingIterable;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 import static org.securegraph.util.IterableUtils.toList;
@@ -69,7 +70,8 @@ public class SqlWorkspaceRepository extends WorkspaceRepository {
     }
 
     @Override
-    public Workspace findById(String workspaceId, User user) {
+    public Workspace findById(String workspaceId, boolean includeHidden, User user) {
+        // TODO support includeHidden
         Session session = sessionManager.getSession();
         List workspaces = session.createCriteria(SqlWorkspace.class).add(Restrictions.eq("workspaceId", workspaceId)).list();
         if (workspaces.size() == 0) {
@@ -120,7 +122,7 @@ public class SqlWorkspaceRepository extends WorkspaceRepository {
     }
 
     @Override
-    public Iterable<Workspace> findAll(User user) {
+    public Iterable<Workspace> findAllForUser(User user) {
         Session session = sessionManager.getSession();
         List workspaces = session.createCriteria(SqlWorkspaceUser.class)
                 .add(Restrictions.eq("sqlWorkspaceUser.user.userId", user.getUserId()))
@@ -200,15 +202,21 @@ public class SqlWorkspaceRepository extends WorkspaceRepository {
     }
 
     @Override
-    public void softDeleteEntityFromWorkspace(Workspace workspace, String vertexId, User user) {
+    public void softDeleteEntitiesFromWorkspace(Workspace workspace, List<String> entityIdsToDelete, User authUser) {
         Session session = sessionManager.getSession();
         Transaction transaction = null;
         try {
             transaction = session.beginTransaction();
-            List<SqlWorkspaceVertex> sqlWorkspaceVertices = ((SqlWorkspace) workspace).getSqlWorkspaceVertices();
-            for (SqlWorkspaceVertex sqlWorkspaceVertex : sqlWorkspaceVertices) {
-                sqlWorkspaceVertex.setVisible(false);
-                session.update(sqlWorkspaceVertex);
+            for (final String vertexId : entityIdsToDelete) {
+                LOGGER.debug("workspace delete (%s): %s", workspace.getWorkspaceId(), vertexId);
+
+                List<SqlWorkspaceVertex> sqlWorkspaceVertices = ((SqlWorkspace) workspace).getSqlWorkspaceVertices();
+                for (SqlWorkspaceVertex sqlWorkspaceVertex : sqlWorkspaceVertices) {
+                    if (entityIdsToDelete.contains(sqlWorkspaceVertex.getVertexId())) {
+                        sqlWorkspaceVertex.setVisible(false);
+                        session.update(sqlWorkspaceVertex);
+                    }
+                }
             }
             transaction.commit();
         } catch (HibernateException e) {
@@ -320,7 +328,7 @@ public class SqlWorkspaceRepository extends WorkspaceRepository {
     }
 
     @Override
-    public ClientApiWorkspaceDiff getDiff(Workspace workspace, User user) {
+    public ClientApiWorkspaceDiff getDiff(Workspace workspace, User user, Locale locale, String timeZone) {
         return new ClientApiWorkspaceDiff();
     }
 
@@ -329,9 +337,9 @@ public class SqlWorkspaceRepository extends WorkspaceRepository {
         List<SqlWorkspaceUser> sqlWorkspaceUsers = getSqlWorkspaceUserLists(workspaceId);
         for (SqlWorkspaceUser workspaceUser : sqlWorkspaceUsers) {
             if (workspaceUser.getUser().getUserId().equals(user.getUserId()) && (
-                    workspaceUser.getWorkspaceAccess().equals(WorkspaceAccess.COMMENT.toString()) ||
-                    workspaceUser.getWorkspaceAccess().equals(WorkspaceAccess.WRITE.toString()
-            ))) {
+                    workspaceUser.getWorkspaceAccess().equals(WorkspaceAccess.COMMENT.toString())
+                            || workspaceUser.getWorkspaceAccess().equals(WorkspaceAccess.WRITE.toString()))
+                    ) {
                 return true;
             }
         }

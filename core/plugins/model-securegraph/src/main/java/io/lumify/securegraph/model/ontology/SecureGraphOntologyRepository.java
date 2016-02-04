@@ -2,6 +2,7 @@ package io.lumify.securegraph.model.ontology;
 
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
@@ -64,20 +65,16 @@ public class SecureGraphOntologyRepository extends OntologyRepositoryBase {
             final Graph graph,
             final Configuration config,
             final AuthorizationRepository authorizationRepository) throws Exception {
+        super(config);
         this.graph = graph;
 
-        authorizationRepository.addAuthorizationToGraph(SecureGraphOntologyRepository.VISIBILITY_STRING);
+        authorizationRepository.addAuthorizationToGraph(VISIBILITY_STRING);
 
-        Set<String> authorizationsSet = new HashSet<String>();
+        Set<String> authorizationsSet = new HashSet<>();
         authorizationsSet.add(VISIBILITY_STRING);
         this.authorizations = authorizationRepository.createAuthorizations(authorizationsSet);
 
-        if (!isOntologyDefined()) {
-            LOGGER.info("Base ontology not defined. Creating a new ontology.");
-            defineOntology(config, authorizations);
-        } else {
-            LOGGER.info("Base ontology already defined.");
-        }
+        loadOntologies(config, authorizations);
     }
 
     @Override
@@ -133,16 +130,25 @@ public class SecureGraphOntologyRepository extends OntologyRepositoryBase {
     }
 
     @Override
+    protected boolean isOntologyDefined(String iri) {
+        Vertex rootConceptVertex = ((SecureGraphConcept) getRootConcept()).getVertex();
+        Property prop = rootConceptVertex.getProperty(iri, ONTOLOGY_FILE_PROPERTY_NAME);
+        if (prop == null) {
+            return false;
+        }
+        return true;
+    }
+
+    @Override
     public List<OWLOntology> loadOntologyFiles(OWLOntologyManager m, OWLOntologyLoaderConfiguration config, IRI excludedIRI) throws OWLOntologyCreationException, IOException {
-        List<OWLOntology> loadedOntologies = new ArrayList<OWLOntology>();
+        List<OWLOntology> loadedOntologies = new ArrayList<>();
         Iterable<Property> ontologyFiles = getOntologyFiles();
         for (Property ontologyFile : ontologyFiles) {
             IRI ontologyFileIRI = IRI.create(ontologyFile.getKey());
             if (excludedIRI != null && excludedIRI.equals(ontologyFileIRI)) {
                 continue;
             }
-            InputStream lumifyBaseOntologyIn = ((StreamingPropertyValue) ontologyFile.getValue()).getInputStream();
-            try {
+            try (InputStream lumifyBaseOntologyIn = ((StreamingPropertyValue) ontologyFile.getValue()).getInputStream()) {
                 Reader lumifyBaseOntologyReader = new InputStreamReader(lumifyBaseOntologyIn);
                 LOGGER.info("Loading existing ontology: %s", ontologyFile.getKey());
                 OWLOntologyDocumentSource lumifyBaseOntologySource = new ReaderDocumentSource(lumifyBaseOntologyReader, ontologyFileIRI);
@@ -152,8 +158,6 @@ public class SecureGraphOntologyRepository extends OntologyRepositoryBase {
                 } catch (UnloadableImportException ex) {
                     LOGGER.error("Could not load %s", ontologyFileIRI, ex);
                 }
-            } finally {
-                lumifyBaseOntologyIn.close();
             }
         }
         return loadedOntologies;
@@ -326,7 +330,7 @@ public class SecureGraphOntologyRepository extends OntologyRepositoryBase {
     }
 
     private List<Concept> toConcepts(Iterable<Vertex> vertices) {
-        ArrayList<Concept> concepts = new ArrayList<Concept>();
+        ArrayList<Concept> concepts = new ArrayList<>();
         for (Vertex vertex : vertices) {
             concepts.add(new SecureGraphConcept(vertex));
         }
@@ -344,7 +348,7 @@ public class SecureGraphOntologyRepository extends OntologyRepositoryBase {
 
     @Override
     public List<Concept> getConceptAndChildrenByIRI(String conceptIRI) {
-        ArrayList<Concept> concepts = new ArrayList<Concept>();
+        ArrayList<Concept> concepts = new ArrayList<>();
         Concept concept = getConceptByIRI(conceptIRI);
         if (concept == null) {
             return null;
@@ -360,7 +364,7 @@ public class SecureGraphOntologyRepository extends OntologyRepositoryBase {
         List<Concept> childConcepts = getChildConcepts(concept);
         List<Concept> parent = Lists.newArrayList(concept);
         if (childConcepts.size() > 0) {
-            List<Concept> childrenList = new ArrayList<Concept>();
+            List<Concept> childrenList = new ArrayList<>();
             for (Concept childConcept : childConcepts) {
                 List<Concept> child = getAllLeafNodesByConcept(childConcept);
                 childrenList.addAll(child);
@@ -421,11 +425,33 @@ public class SecureGraphOntologyRepository extends OntologyRepositoryBase {
             Collection<TextIndexHint> textIndexHints,
             boolean userVisible,
             boolean searchable,
+            boolean addable,
             String displayType,
             String propertyGroup,
-            Double boost) {
+            Double boost,
+            String validationFormula,
+            String displayFormula,
+            ImmutableList<String> dependentPropertyIris,
+            String[] intents
+    ) {
         checkNotNull(concepts, "vertex was null");
-        OntologyProperty property = getOrCreatePropertyType(concepts, propertyIri, dataType, displayName, possibleValues, textIndexHints, userVisible, searchable, displayType, propertyGroup, boost);
+        OntologyProperty property = getOrCreatePropertyType(
+                concepts,
+                propertyIri,
+                dataType,
+                displayName,
+                possibleValues,
+                textIndexHints,
+                userVisible,
+                searchable,
+                addable,
+                displayType,
+                propertyGroup,
+                boost,
+                validationFormula,
+                displayFormula,
+                dependentPropertyIris, intents
+        );
         checkNotNull(property, "Could not find property: " + propertyIri);
 
         for (Concept concept : concepts) {
@@ -455,7 +481,14 @@ public class SecureGraphOntologyRepository extends OntologyRepositoryBase {
     }
 
     @Override
-    public Relationship getOrCreateRelationshipType(Iterable<Concept> domainConcepts, Iterable<Concept> rangeConcepts, String relationshipIRI, String displayName) {
+    public Relationship getOrCreateRelationshipType(
+            Iterable<Concept> domainConcepts,
+            Iterable<Concept> rangeConcepts,
+            String relationshipIRI,
+            String displayName,
+            String[] intents,
+            boolean userVisible
+    ) {
         Relationship relationship = getRelationshipByIRI(relationshipIRI);
         if (relationship != null) {
             return relationship;
@@ -465,6 +498,10 @@ public class SecureGraphOntologyRepository extends OntologyRepositoryBase {
         CONCEPT_TYPE.setProperty(builder, TYPE_RELATIONSHIP, VISIBILITY.getVisibility());
         ONTOLOGY_TITLE.setProperty(builder, relationshipIRI, VISIBILITY.getVisibility());
         DISPLAY_NAME.setProperty(builder, displayName, VISIBILITY.getVisibility());
+        USER_VISIBLE.setProperty(builder, userVisible, VISIBILITY.getVisibility());
+        for (String intent : intents) {
+            INTENT.addPropertyValue(builder, intent, intent, VISIBILITY.getVisibility());
+        }
         Vertex relationshipVertex = builder.save(getAuthorizations());
 
         for (Concept domainConcept : domainConcepts) {
@@ -475,7 +512,7 @@ public class SecureGraphOntologyRepository extends OntologyRepositoryBase {
             findOrAddEdge(relationshipVertex, ((SecureGraphConcept) rangeConcept).getVertex(), LabelName.HAS_EDGE.toString());
         }
 
-        List<String> inverseOfIRIs = new ArrayList<String>(); // no inverse of because this relationship is new
+        List<String> inverseOfIRIs = new ArrayList<>(); // no inverse of because this relationship is new
 
         graph.flush();
 
@@ -505,24 +542,18 @@ public class SecureGraphOntologyRepository extends OntologyRepositoryBase {
             Collection<TextIndexHint> textIndexHints,
             boolean userVisible,
             boolean searchable,
+            boolean addable,
             String displayType,
             String propertyGroup,
-            Double boost) {
+            Double boost,
+            String validationFormula,
+            String displayFormula,
+            ImmutableList<String> dependentPropertyIris,
+            String[] intents
+    ) {
         OntologyProperty typeProperty = getPropertyByIRI(propertyIri);
         if (typeProperty == null) {
-            DefinePropertyBuilder definePropertyBuilder = graph.defineProperty(propertyIri);
-            definePropertyBuilder.dataType(PropertyType.getTypeClass(dataType));
-            if (dataType == PropertyType.STRING) {
-                definePropertyBuilder.textIndexHint(textIndexHints);
-            }
-            if (boost != null) {
-                if (graph.isFieldBoostSupported()) {
-                    definePropertyBuilder.boost(boost);
-                } else {
-                    LOGGER.warn("Field boosting is not support by the graph");
-                }
-            }
-            definePropertyBuilder.define();
+            definePropertyOnGraph(graph, propertyIri, dataType, textIndexHints, boost);
 
             VertexBuilder builder = graph.prepareVertex(ID_PREFIX_PROPERTY + propertyIri, VISIBILITY.getVisibility());
             CONCEPT_TYPE.setProperty(builder, TYPE_PROPERTY, VISIBILITY.getVisibility());
@@ -530,6 +561,7 @@ public class SecureGraphOntologyRepository extends OntologyRepositoryBase {
             DATA_TYPE.setProperty(builder, dataType.toString(), VISIBILITY.getVisibility());
             USER_VISIBLE.setProperty(builder, userVisible, VISIBILITY.getVisibility());
             SEARCHABLE.setProperty(builder, searchable, VISIBILITY.getVisibility());
+            ADDABLE.setProperty(builder, addable, VISIBILITY.getVisibility());
             if (boost != null) {
                 BOOST.setProperty(builder, boost, VISIBILITY.getVisibility());
             }
@@ -539,11 +571,28 @@ public class SecureGraphOntologyRepository extends OntologyRepositoryBase {
             if (possibleValues != null) {
                 POSSIBLE_VALUES.setProperty(builder, JSONUtil.toJson(possibleValues), VISIBILITY.getVisibility());
             }
-            if (displayType != null && !displayName.trim().isEmpty()) {
+            if (displayType != null && !displayType.trim().isEmpty()) {
                 DISPLAY_TYPE.setProperty(builder, displayType, VISIBILITY.getVisibility());
             }
             if (propertyGroup != null && !propertyGroup.trim().isEmpty()) {
                 PROPERTY_GROUP.setProperty(builder, propertyGroup, VISIBILITY.getVisibility());
+            }
+            if (validationFormula != null && !validationFormula.trim().isEmpty()) {
+                VALIDATION_FORMULA.setProperty(builder, validationFormula, VISIBILITY.getVisibility());
+            }
+            if (displayFormula != null && !displayFormula.trim().isEmpty()) {
+                DISPLAY_FORMULA.setProperty(builder, displayFormula, VISIBILITY.getVisibility());
+            }
+            if (dependentPropertyIris != null) {
+                int i = 0;
+                for (String dependentPropertyIri : dependentPropertyIris) {
+                    DEPENDENT_PROPERTY_IRI.addPropertyValue(builder, Integer.toString(i), dependentPropertyIri, VISIBILITY.getVisibility());
+                    i++;
+                }
+                // TODO: if the list of dependent property iris gets smaller they will not get cleaned up.
+            }
+            for (String intent : intents) {
+                INTENT.addPropertyValue(builder, intent, intent, VISIBILITY.getVisibility());
             }
             typeProperty = new SecureGraphOntologyProperty(builder.save(getAuthorizations()));
             graph.flush();

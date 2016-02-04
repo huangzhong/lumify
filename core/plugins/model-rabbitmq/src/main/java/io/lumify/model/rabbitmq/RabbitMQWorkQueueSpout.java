@@ -17,6 +17,7 @@ import java.io.IOException;
 
 public class RabbitMQWorkQueueSpout extends WorkerSpout {
     private static final LumifyLogger LOGGER = LumifyLoggerFactory.getLogger(RabbitMQWorkQueueSpout.class);
+    public static final int DEFAULT_RABBITMQ_PREFETCH_COUNT = 10;
     private final String queueName;
     private Channel channel;
     private QueueingConsumer consumer;
@@ -34,6 +35,8 @@ public class RabbitMQWorkQueueSpout extends WorkerSpout {
             this.channel = RabbitMQUtils.openChannel(this.connection);
             this.channel.queueDeclare(queueName, true, false, false, null);
             this.consumer = new QueueingConsumer(channel);
+            Integer prefetchCount = configuration.getInt(Configuration.RABBITMQ_PREFETCH_COUNT, DEFAULT_RABBITMQ_PREFETCH_COUNT);
+            this.channel.basicQos(prefetchCount, false);
             this.channel.basicConsume(this.queueName, false, consumer);
         } catch (IOException ex) {
             throw new LumifyException("Could not startup RabbitMQ", ex);
@@ -86,7 +89,9 @@ public class RabbitMQWorkQueueSpout extends WorkerSpout {
         }
     }
 
-    protected QueueingConsumer getConsumer () { return this.consumer; }
+    protected QueueingConsumer getConsumer() {
+        return this.consumer;
+    }
 
     @Inject
     public void setConfiguration(Configuration configuration) {

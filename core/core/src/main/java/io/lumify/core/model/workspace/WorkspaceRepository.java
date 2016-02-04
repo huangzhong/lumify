@@ -3,6 +3,8 @@ package io.lumify.core.model.workspace;
 import io.lumify.core.exception.LumifyAccessDeniedException;
 import io.lumify.core.security.LumifyVisibility;
 import io.lumify.core.user.User;
+import io.lumify.core.util.LumifyLogger;
+import io.lumify.core.util.LumifyLoggerFactory;
 import io.lumify.web.clientapi.model.ClientApiWorkspace;
 import io.lumify.web.clientapi.model.ClientApiWorkspaceDiff;
 import io.lumify.web.clientapi.model.GraphPosition;
@@ -15,16 +17,19 @@ import org.securegraph.util.ConvertingIterable;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
 public abstract class WorkspaceRepository {
+    private static final LumifyLogger LOGGER = LumifyLoggerFactory.getLogger(WorkspaceRepository.class);
     public static final String VISIBILITY_STRING = "workspace";
     public static final LumifyVisibility VISIBILITY = new LumifyVisibility(VISIBILITY_STRING);
     public static final String WORKSPACE_CONCEPT_IRI = "http://lumify.io/workspace#workspace";
-    public static final String WORKSPACE_TO_ENTITY_RELATIONSHIP_IRI = "http://lumify.io/workspace/toEntity";
-    public static final String WORKSPACE_TO_USER_RELATIONSHIP_IRI = "http://lumify.io/workspace/toUser";
+    public static final String WORKSPACE_TO_ENTITY_RELATIONSHIP_IRI = "http://lumify.io/workspace#toEntity";
+    public static final String WORKSPACE_TO_USER_RELATIONSHIP_IRI = "http://lumify.io/workspace#toUser";
     public static final String WORKSPACE_ID_PREFIX = "WORKSPACE_";
+    public static final String OWL_IRI = "http://lumify.io/workspace";
     private final Graph graph;
 
     protected WorkspaceRepository(Graph graph) {
@@ -33,7 +38,11 @@ public abstract class WorkspaceRepository {
 
     public abstract void delete(Workspace workspace, User user);
 
-    public abstract Workspace findById(String workspaceId, User user);
+    public Workspace findById(String workspaceId, User user) {
+        return findById(workspaceId, false, user);
+    }
+
+    public abstract Workspace findById(String workspaceId, boolean includeHidden, User user);
 
     public Iterable<Workspace> findByIds(final Iterable<String> workspaceIds, final User user) {
         return new ConvertingIterable<String, Workspace>(workspaceIds) {
@@ -58,7 +67,7 @@ public abstract class WorkspaceRepository {
         return add(workspaceId, title, user);
     }
 
-    public abstract Iterable<Workspace> findAll(User user);
+    public abstract Iterable<Workspace> findAllForUser(User user);
 
     public abstract void setTitle(Workspace workspace, String title, User user);
 
@@ -83,16 +92,16 @@ public abstract class WorkspaceRepository {
         return newWorkspace;
     }
 
-    public abstract void softDeleteEntityFromWorkspace(Workspace workspace, String vertexId, User user);
+    public abstract void softDeleteEntitiesFromWorkspace(Workspace workspace, List<String> entityIdsToDelete, User authUser);
 
     public abstract void deleteUserFromWorkspace(Workspace workspace, String userId, User user);
 
     public abstract void updateUserOnWorkspace(Workspace workspace, String userId, WorkspaceAccess workspaceAccess, User user);
 
-    public abstract ClientApiWorkspaceDiff getDiff(Workspace workspace, User user);
+    public abstract ClientApiWorkspaceDiff getDiff(Workspace workspace, User user, Locale locale, String timeZone);
 
-    public String getCreatorUserId(Workspace workspace, User user) {
-        for (WorkspaceUser workspaceUser : findUsersWithAccess(workspace.getWorkspaceId(), user)) {
+    public String getCreatorUserId(String workspaceId, User user) {
+        for (WorkspaceUser workspaceUser : findUsersWithAccess(workspaceId, user)) {
             if (workspaceUser.isCreator()) {
                 return workspaceUser.getUserId();
             }
@@ -123,7 +132,7 @@ public abstract class WorkspaceRepository {
             workspaceJson.put("workspaceId", workspace.getWorkspaceId());
             workspaceJson.put("title", workspace.getDisplayTitle());
 
-            String creatorUserId = getCreatorUserId(workspace, user);
+            String creatorUserId = getCreatorUserId(workspace.getWorkspaceId(), user);
             if (creatorUserId != null) {
                 workspaceJson.put("createdBy", creatorUserId);
                 workspaceJson.put("sharedToUser", !creatorUserId.equals(user.getUserId()));
@@ -179,7 +188,7 @@ public abstract class WorkspaceRepository {
             workspaceClientApi.setWorkspaceId(workspace.getWorkspaceId());
             workspaceClientApi.setTitle(workspace.getDisplayTitle());
 
-            String creatorUserId = getCreatorUserId(workspace, user);
+            String creatorUserId = getCreatorUserId(workspace.getWorkspaceId(), user);
             if (creatorUserId != null) {
                 workspaceClientApi.setCreatedBy(creatorUserId);
                 workspaceClientApi.setSharedToUser(!creatorUserId.equals(user.getUserId()));
@@ -240,7 +249,7 @@ public abstract class WorkspaceRepository {
     public abstract void updateEntitiesOnWorkspace(Workspace workspace, Iterable<Update> updates, User user);
 
     public void updateEntityOnWorkspace(Workspace workspace, Update update, User user) {
-        List<Update> updates = new ArrayList<Update>();
+        List<Update> updates = new ArrayList<>();
         updates.add(update);
         updateEntitiesOnWorkspace(workspace, updates, user);
     }

@@ -14,7 +14,6 @@ import io.lumify.core.security.LumifyVisibility;
 import io.lumify.core.util.LumifyLogger;
 import io.lumify.core.util.LumifyLoggerFactory;
 import io.lumify.core.util.ProcessRunner;
-import io.lumify.gpw.MediaPropertyConfiguration;
 import io.lumify.gpw.util.FFprobeRotationUtil;
 import org.apache.commons.io.FileUtils;
 import org.securegraph.*;
@@ -37,22 +36,20 @@ import static org.securegraph.util.IterableUtils.toList;
 
 public class VideoFrameExtractGraphPropertyWorker extends GraphPropertyWorker {
     private static final LumifyLogger LOGGER = LumifyLoggerFactory.getLogger(VideoFrameExtractGraphPropertyWorker.class);
-
-    private MediaPropertyConfiguration config = new MediaPropertyConfiguration();
     private ProcessRunner processRunner;
+    private IntegerLumifyProperty videoRotationProperty;
 
     @Override
     public void prepare(GraphPropertyWorkerPrepareData workerPrepareData) throws Exception {
         super.prepare(workerPrepareData);
-        getConfiguration().setConfigurables(config, MediaPropertyConfiguration.PROPERTY_NAME_PREFIX);
-        getAuthorizationRepository().addAuthorizationToGraph(VideoFrameInfo.VISIBILITY);
+        getAuthorizationRepository().addAuthorizationToGraph(VideoFrameInfo.VISIBILITY_STRING);
+        videoRotationProperty = new IntegerLumifyProperty(getOntologyRepository().getRequiredPropertyIRIByIntent("media.clockwiseRotation"));
     }
 
     @Override
     public void execute(InputStream in, GraphPropertyWorkData data) throws Exception {
-        IntegerLumifyProperty videoRotationProperty = new IntegerLumifyProperty(config.clockwiseRotationIri);
         Integer videoRotation = videoRotationProperty.getPropertyValue(data.getElement(), 0);
-        Visibility newVisibility = new LumifyVisibility(LumifyVisibility.and(getVisibilityTranslator().toVisibilityNoSuperUser(data.getVisibilityJson()), VideoFrameInfo.VISIBILITY)).getVisibility();
+        Visibility newVisibility = new LumifyVisibility(LumifyVisibility.and(getVisibilityTranslator().toVisibilityNoSuperUser(data.getVisibilityJson()), VideoFrameInfo.VISIBILITY_STRING)).getVisibility();
 
         Pattern fileNamePattern = Pattern.compile("image-([0-9]+)\\.png");
         File tempDir = Files.createTempDir();
@@ -111,7 +108,7 @@ public class VideoFrameExtractGraphPropertyWorker extends GraphPropertyWorker {
 
     private String[] prepareFFMPEGOptions(File videoFileName, File outDir, GraphPropertyWorkData data, double framesPerSecondToExtract, int videoRotation) {
 
-        ArrayList<String> ffmpegOptionsList = new ArrayList<String>();
+        ArrayList<String> ffmpegOptionsList = new ArrayList<>();
         ffmpegOptionsList.add("-i");
         ffmpegOptionsList.add(videoFileName.getAbsolutePath());
         ffmpegOptionsList.add("-r");

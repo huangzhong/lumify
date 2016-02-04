@@ -71,6 +71,38 @@
         margin-top: 16.5em;
     }
 
+    .detail-overlay {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      width: 100%;
+      background: rgba(255,255,255,0.6);
+      z-index: 1;
+      text-align: center;
+      background: rgba(255,255,255,0.8) url(../img/loading-large@2x.png) no-repeat center;
+      background-size: 150px auto;
+      .opacity(90);
+      h1 {
+        padding: 0;
+        margin: 0;
+        display: block;
+        font-family: @light-font;
+        font-size: 150%;
+        left: 0;
+        margin-top: 4.5em;
+        position: absolute;
+        text-align: center;
+        top: 50%;
+        width: 100%;
+        text-shadow: none;
+        font-weight: normal;
+        color: #ddd;
+        line-height: normal;
+      }
+    }
+
   }
 
   .entity_audit_events .audit-list {
@@ -78,6 +110,10 @@
     li {
       padding: 0;
     }
+  }
+
+  .delete-form .underneath .form {
+    margin-top: 0;
   }
 
   .audit-list {
@@ -331,7 +367,7 @@
     .ui-draggable-dragging { white-space: nowrap; }
 
     // When dropdown is opened
-    &.dropdown .entity { 
+    &.dropdown .vertex, &.dropdown .property { 
       color:@fade-color;
 
       &.focused {
@@ -572,7 +608,7 @@
     display: inline-block;
     max-width: 100%;
     position: relative;
-    margin: 1em 0 -1.5em 0;
+    margin: 0 0 -1.3em 0;
     width: 100%;
     overflow: hidden;
 
@@ -839,9 +875,13 @@
     background-color: red;
   }
 
-  .entity, .artifact {
+  .vertex, .artifact {
     cursor: pointer;
     border-bottom: 1px dotted black;
+  }
+  .property.resolved {
+    cursor: pointer;
+    font-style: italic;
   }
 
   .resolved {

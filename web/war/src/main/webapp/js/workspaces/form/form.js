@@ -92,8 +92,8 @@ define([
                 var $this = $(this);
                 if ($this.data('userId') === user.id) {
                     $this.find('.user-status')
-                        .removeClass('active idle offline unknown')
-                        .addClass((user.status && user.status.toLowerCase()) || 'unknown');
+                        .removePrefixedClasses('st-')
+                        .addClass('st-' + (user.status && user.status.toLowerCase() || 'unknown'));
                 }
             })
         };
@@ -138,7 +138,11 @@ define([
                 userIds = _.pluck(workspaceUsers, 'userId'),
                 html = $();
 
-            this.dataRequest('user', 'search', { userIds: userIds })
+            userIds = _.without(userIds, lumifyData.currentUser.id);
+
+            (userIds.length ?
+                this.dataRequest('user', 'search', { userIds: userIds }) :
+                Promise.resolve([]))
                 .done(function(users) {
                     var usersById = _.indexBy(users, 'id');
                     self.currentUsers = usersById;

@@ -6,8 +6,10 @@ import io.lumify.core.ingest.graphProperty.GraphPropertyWorkData;
 import io.lumify.core.ingest.graphProperty.GraphPropertyWorkerPrepareData;
 import io.lumify.core.ingest.graphProperty.TermMentionFilter;
 import io.lumify.core.model.audit.AuditRepository;
+import io.lumify.core.model.ontology.OntologyRepository;
 import io.lumify.core.model.properties.LumifyProperties;
 import io.lumify.core.model.termMention.TermMentionRepository;
+import io.lumify.core.model.workQueue.WorkQueueRepository;
 import io.lumify.core.security.DirectVisibilityTranslator;
 import io.lumify.core.security.VisibilityTranslator;
 import io.lumify.core.user.User;
@@ -31,6 +33,7 @@ import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.when;
 import static org.securegraph.util.IterableUtils.toList;
 
 @RunWith(MockitoJUnitRunner.class)
@@ -43,6 +46,12 @@ public class KnownEntityExtractorGraphPropertyWorkerTest {
     @Mock
     private AuditRepository auditRepostiory;
 
+    @Mock
+    private OntologyRepository ontologyRepository;
+
+    @Mock
+    private WorkQueueRepository workQueueRepository;
+
     String dictionaryPath;
     private InMemoryAuthorizations authorizations;
     private InMemoryAuthorizations termMentionAuthorizations;
@@ -53,22 +62,29 @@ public class KnownEntityExtractorGraphPropertyWorkerTest {
     @Before
     public void setup() throws Exception {
         Map config = new HashMap();
-        config.put(io.lumify.core.config.Configuration.ONTOLOGY_IRI_PERSON, "http://lumify.io/test#person");
-        config.put(io.lumify.core.config.Configuration.ONTOLOGY_IRI_LOCATION, "http://lumify.io/test#location");
-        config.put(io.lumify.core.config.Configuration.ONTOLOGY_IRI_ORGANIZATION, "http://lumify.io/test#organization");
-        config.put(io.lumify.core.config.Configuration.ONTOLOGY_IRI_ARTIFACT_HAS_ENTITY, "http://lumify.io/test#artifactHasEntity");
+        config.put("ontology.intent.concept.person", "http://lumify.io/test#person");
+        config.put("ontology.intent.concept.location", "http://lumify.io/test#location");
+        config.put("ontology.intent.concept.organization", "http://lumify.io/test#organization");
+        config.put("ontology.intent.relationship.artifactHasEntity", "http://lumify.io/test#artifactHasEntity");
         io.lumify.core.config.Configuration configuration = new HashMapConfigurationLoader(config).createConfiguration();
+
+        when(ontologyRepository.getRequiredConceptIRIByIntent("location")).thenReturn("http://lumify.io/test#location");
+        when(ontologyRepository.getRequiredConceptIRIByIntent("organization")).thenReturn("http://lumify.io/test#organization");
+        when(ontologyRepository.getRequiredConceptIRIByIntent("person")).thenReturn("http://lumify.io/test#person");
+        when(ontologyRepository.getRequiredRelationshipIRIByIntent("artifactHasEntity")).thenReturn("http://lumify.io/test#artifactHasEntity");
 
         dictionaryPath = getClass().getResource(".").getPath();
         extractor = new KnownEntityExtractorGraphPropertyWorker();
         extractor.setAuditRepository(auditRepostiory);
         extractor.setVisibilityTranslator(visibilityTranslator);
         extractor.setConfiguration(configuration);
+        extractor.setOntologyRepository(ontologyRepository);
+        extractor.setWorkQueueRepository(workQueueRepository);
 
         config.put(KnownEntityExtractorGraphPropertyWorker.PATH_PREFIX_CONFIG, "file://" + dictionaryPath);
         FileSystem hdfsFileSystem = FileSystem.get(new Configuration());
         authorizations = new InMemoryAuthorizations();
-        termMentionAuthorizations = new InMemoryAuthorizations(TermMentionRepository.VISIBILITY);
+        termMentionAuthorizations = new InMemoryAuthorizations(TermMentionRepository.VISIBILITY_STRING);
         Injector injector = null;
         List<TermMentionFilter> termMentionFilters = new ArrayList<TermMentionFilter>();
         GraphPropertyWorkerPrepareData workerPrepareData = new GraphPropertyWorkerPrepareData(config, termMentionFilters, hdfsFileSystem, user, authorizations, injector);
